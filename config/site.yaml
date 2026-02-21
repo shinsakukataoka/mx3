@@ -1,0 +1,12 @@
+SNIPER_HOME: /home/skataoka26/src/sniper
+SPEC_ROOT: /home/skataoka26/spec2017
+TRACE_ROOT: /home/skataoka26/traces_w200M_r1000M
+CONDA_SQLITE_LIB: /home/skataoka26/miniconda3/lib
+CONDA_LIB: /home/skataoka26/miniconda3/lib
+CONDA_PY: /home/skataoka26/miniconda3/bin/python
+GCC_DIR: /cm/local/apps/gcc/13.1.0
+# microbench binaries
+MICROBENCH_BIN: /home/skataoka26/COSC_498/microbench/bin
+# kernel drivers + inputs
+BLIS_BIN: /home/skataoka26/COSC_498/kernels/blis_gemm_driver
+BLIS_LIBDIR: /home/skataoka26/COSC_498/kernels/blis/install/lib

@@ -1,0 +1,27 @@
+uarch:
+  gainestown:
+    power:
+      p_static_w: 15.93
+      k_dyn_w_per_ghz_util: 2.226
+    cap_w:
+      single:
+        2: 22.27
+        32: 22.27
+        128: 22.84
+      multicore:
+        2: 40.04
+        32: 40.31
+        128: 40.91
+
+  sunnycove:
+    power:
+      p_static_w: 18.553
+      k_dyn_w_per_ghz_util: 4.491
+    cap_w:
+      single:
+        2: 30.56
+        32: 30.82
+        128: 31.39
+      multicore:
+        32: 66.67
+        128: 67.24

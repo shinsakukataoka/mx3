@@ -1,0 +1,20 @@
+2:
+  rd_cyc: 4
+  wr_cyc: 2
+  r_pj: 228
+  w_pj: 214
+  leak_mw: 61.793
+
+32:
+  rd_cyc: 29
+  wr_cyc: 15
+  r_pj: 710
+  w_pj: 671
+  leak_mw: 330.430
+
+128:
+  rd_cyc: 105
+  wr_cyc: 52
+  r_pj: 1589
+  w_pj: 1444
+  leak_mw: 899.078

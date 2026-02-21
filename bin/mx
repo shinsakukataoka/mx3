@@ -1,0 +1,972 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import datetime as _dt
+import os
+import re
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
+
+
+# ----------------------------
+# Tiny YAML loader (no deps)
+# ----------------------------
+def _coerce_scalar(val: str) -> Any:
+    v = val.strip()
+    if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+        v = v[1:-1]
+    low = v.lower()
+    if low == "true":
+        return True
+    if low == "false":
+        return False
+    if low in ("null", "none", "~", ""):
+        return None
+    try:
+        if any(ch in v for ch in (".", "e", "E")):
+            return float(v)
+        return int(v)
+    except Exception:
+        return v
+
+
+def cheap_yaml_load(text: str) -> Dict[str, Any]:
+    root: Dict[str, Any] = {}
+    stack: List[Tuple[int, Dict[str, Any]]] = [(-1, root)]
+    for raw in text.splitlines():
+        if not raw.strip():
+            continue
+        if raw.lstrip().startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        m = re.match(r"^\s*([A-Za-z0-9_.-]+):\s*(.*)$", raw)
+        if not m:
+            continue
+        key, rest = m.group(1), m.group(2)
+
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        parent = stack[-1][1] if stack else root
+
+        if rest == "" or rest in ("|", ">"):
+            newd: Dict[str, Any] = {}
+            parent[key] = newd
+            stack.append((indent, newd))
+        else:
+            parent[key] = _coerce_scalar(rest)
+    return root
+
+
+def load_yaml(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    text = path.read_text()
+    try:
+        import yaml  # type: ignore
+        return yaml.safe_load(text) or {}
+    except Exception:
+        return cheap_yaml_load(text)
+
+
+# ----------------------------
+# Repo root discovery
+# ----------------------------
+def find_repo_root() -> Path:
+    here = Path(__file__).resolve()
+    for p in [here] + list(here.parents):
+        if (p / "mx2").is_dir():
+            return p
+    return Path.cwd().resolve()
+
+
+REPO_ROOT = find_repo_root()
+MX2_ROOT = (REPO_ROOT / "mx2").resolve()
+
+
+# ----------------------------
+# Helpers
+# ----------------------------
+def ensure_dir(p: Path) -> None:
+    p.mkdir(parents=True, exist_ok=True)
+
+
+def now_run_id(prefix: str, tag: str = "") -> str:
+    ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    base = f"{ts}_{prefix}"
+    if tag:
+        tag_clean = re.sub(r"[^A-Za-z0-9_.-]+", "_", tag.strip())
+        base += f"_{tag_clean}"
+    return base
+
+
+def expand_path(s: str) -> str:
+    return str(Path(os.path.expandvars(os.path.expanduser(s))).resolve())
+
+
+def sh_export_line(k: str, v: str) -> str:
+    return f"export {k}={shlex.quote(v)}"
+
+
+def parse_job_line(line: str) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for tok in line.strip().split():
+        if "=" not in tok:
+            continue
+        k, v = tok.split("=", 1)
+        out[k] = v
+    return out
+
+
+def fmt_num(x: float) -> str:
+    s = f"{x:.6f}".rstrip("0").rstrip(".")
+    return s if s else "0"
+
+
+def fmt_tok(x: float) -> str:
+    return fmt_num(x).replace(".", "p")
+
+
+def leakdvfs_variant_label(
+    cap_w: float,
+    static_w: float,
+    dyn_w: float,
+    target_frac: float,
+    hyst_w: float,
+    fmax_ghz: float,
+    step_ghz: float,
+    periodic_ins: int,
+) -> str:
+    # Note: label remains lc_* because Sniper knobs are lc/* and your parser expects it.
+    return (
+        f"lc_c{fmt_tok(cap_w)}"
+        f"_s{fmt_tok(static_w)}"
+        f"_d{fmt_tok(dyn_w)}"
+        f"_tf{fmt_tok(target_frac)}"
+        f"_h{fmt_tok(hyst_w)}"
+        f"_f{fmt_tok(fmax_ghz)}"
+        f"_st{fmt_tok(step_ghz)}"
+        f"_pi{int(periodic_ins)}"
+    )
+
+
+def default_spec_benches() -> List[str]:
+    return [
+        "541.leela_r", "531.deepsjeng_r", "520.omnetpp_r", "648.exchange2_s",
+        "505.mcf_r", "523.xalancbmk_r", "500.perlbench_r", "502.gcc_r",
+        "557.xz_r", "649.fotonik3d_s",
+    ]
+
+
+def default_trace_workloads(sim_n: int) -> List[str]:
+    if sim_n == 8:
+        return [
+            "502.gcc_r+502.gcc_r+502.gcc_r+502.gcc_r+502.gcc_r+502.gcc_r+502.gcc_r+502.gcc_r",
+            "505.mcf_r+505.mcf_r+505.mcf_r+505.mcf_r+505.mcf_r+505.mcf_r+505.mcf_r+505.mcf_r",
+            "557.xz_r+557.xz_r+557.xz_r+557.xz_r+557.xz_r+557.xz_r+557.xz_r+557.xz_r",
+            "505.mcf_r+505.mcf_r+505.mcf_r+505.mcf_r+502.gcc_r+502.gcc_r+502.gcc_r+502.gcc_r",
+            "505.mcf_r+505.mcf_r+505.mcf_r+505.mcf_r+557.xz_r+557.xz_r+557.xz_r+557.xz_r",
+            "502.gcc_r+502.gcc_r+502.gcc_r+502.gcc_r+557.xz_r+557.xz_r+557.xz_r+557.xz_r",
+            "523.xalancbmk_r+523.xalancbmk_r+523.xalancbmk_r+523.xalancbmk_r+502.gcc_r+502.gcc_r+502.gcc_r+502.gcc_r",
+            "520.omnetpp_r+520.omnetpp_r+520.omnetpp_r+520.omnetpp_r+531.deepsjeng_r+531.deepsjeng_r+531.deepsjeng_r+531.deepsjeng_r",
+            "505.mcf_r+505.mcf_r+500.perlbench_r+500.perlbench_r+648.exchange2_s+648.exchange2_s+649.fotonik3d_s+649.fotonik3d_s",
+            "505.mcf_r+505.mcf_r+557.xz_r+557.xz_r+648.exchange2_s+648.exchange2_s+649.fotonik3d_s+649.fotonik3d_s",
+            "500.perlbench_r+500.perlbench_r+502.gcc_r+502.gcc_r+505.mcf_r+505.mcf_r+557.xz_r+557.xz_r",
+        ]
+    return [
+        "502.gcc_r+502.gcc_r+502.gcc_r+502.gcc_r",
+        "505.mcf_r+505.mcf_r+505.mcf_r+505.mcf_r",
+        "557.xz_r+557.xz_r+557.xz_r+557.xz_r",
+        "505.mcf_r+505.mcf_r+502.gcc_r+502.gcc_r",
+        "505.mcf_r+505.mcf_r+557.xz_r+557.xz_r",
+        "502.gcc_r+502.gcc_r+557.xz_r+557.xz_r",
+        "523.xalancbmk_r+523.xalancbmk_r+502.gcc_r+502.gcc_r",
+        "520.omnetpp_r+520.omnetpp_r+531.deepsjeng_r+531.deepsjeng_r",
+        "505.mcf_r+500.perlbench_r+648.exchange2_s+649.fotonik3d_s",
+        "505.mcf_r+557.xz_r+648.exchange2_s+649.fotonik3d_s",
+        "500.perlbench_r+502.gcc_r+505.mcf_r+557.xz_r",
+    ]
+
+def default_hca_benches() -> List[str]:
+    return [
+        "541.leela_r", "531.deepsjeng_r", "520.omnetpp_r", "648.exchange2_s",
+        "505.mcf_r", "523.xalancbmk_r", "500.perlbench_r", "502.gcc_r",
+        "557.xz_r", "619.lbm_s", "621.wrf_s", "649.fotonik3d_s",
+    ]
+
+
+DEFAULT_HCA_VARIANTS = [
+    "baseline_sram_only", "baseline_mram_only", "baseline_8_sram",
+    "grid_s4_fillsram", "grid_s4_fillmram", "grid_s8_fillsram", "grid_s8_fillmram",
+    "grid_s12_fillsram", "grid_s12_fillmram",
+    "mig_s8_fillsram_p4_c16",  "mig_s8_fillsram_p4_c32",  "mig_s8_fillsram_p4_c64",
+    "mig_s8_fillsram_p8_c16",  "mig_s8_fillsram_p8_c32",  "mig_s8_fillsram_p8_c64",
+    "mig_s8_fillsram_p16_c16", "mig_s8_fillsram_p16_c32", "mig_s8_fillsram_p16_c64",
+]
+
+def plan_hca(args: argparse.Namespace, site: Dict[str, Any]) -> Path:
+    out_base = Path(args.out).resolve()
+
+    sram_tech = args.sram_tech
+    mram_tech = args.mram_tech
+    tech_tag = args.tech_tag or f"{sram_tech}-{mram_tech}"
+    tech_tag_clean = re.sub(r"[^A-Za-z0-9_.-]+", "_", tech_tag)
+
+    run_id = args.run_id or now_run_id(f"hca_{args.uarch}_{tech_tag_clean}", args.tag or "")
+    run_dir = out_base / "hca" / run_id
+    runs_root = run_dir / "runs"
+    ensure_dir(runs_root)
+    ensure_dir(run_dir / "slurm")
+    write_env_sh(run_dir, site)
+
+    benches = args.benches.split(",") if args.benches else default_hca_benches()
+    l3_list = [int(x) for x in args.l3.split(",")]
+
+    variants = args.variants.split(",") if args.variants else DEFAULT_HCA_VARIANTS
+
+    jobs: List[str] = []
+    for bench in benches:
+        for l3 in l3_list:
+            for var in variants:
+                outdir = outdir_spec(runs_root, bench, args.roi_m, args.warmup_m, l3, var, tech_tag_clean)
+                kv: Dict[str, str] = {
+                    "CAMPAIGN": "hca",
+                    "OUTDIR": str(outdir),
+                    "JOB_OUTDIR": str(outdir),
+                    "SNIPER_CONFIG": args.uarch,
+
+                    # Keep TECH for metadata/run.yaml, but HCA device pairing uses SRAM_TECH/MRAM_TECH
+                    "TECH": tech_tag_clean,
+                    "SRAM_TECH": sram_tech,
+                    "MRAM_TECH": mram_tech,
+
+                    "BENCH": bench,
+                    "L3_MB": str(l3),
+                    "VARIANT": var,
+                    "ROI_M": str(args.roi_m),
+                    "WARMUP_M": str(args.warmup_m),
+                    "SPEC_SIZE": args.spec_size,
+                    "SIM_N": str(args.cores),
+                    "SKIP_SPEC_BUILD": str(args.skip_spec_build),
+                    "MAX_SIM_MIN": str(args.max_sim_min),
+                    "BASE_FREQ_GHZ": str(args.base_freq_ghz),
+                    "BASE_PERIODIC_INS": str(args.base_periodic_ins),
+                    "DIR_ENTRIES": str(args.dir_entries),
+                    "FAIL_ON_SIFT_ASSERT": str(int(not args.allow_sift_assert)),
+                    "SANITY_CHECK_NO_MEM": str(int(not args.allow_no_mem)),
+                }
+
+                for k, v in kv.items():
+                    if any(ch.isspace() for ch in v):
+                        raise SystemExit(f"[ERR] whitespace in job token: {k}={v}")
+                jobs.append(" ".join(f"{k}={v}" for k, v in kv.items()))
+
+    (run_dir / "jobs.txt").write_text("\n".join(jobs) + ("\n" if jobs else ""))
+    print(f"[OK] planned HCA jobs={len(jobs)} run_dir={run_dir}")
+    return run_dir
+
+def get_params(params: Dict[str, Any], uarch: str) -> Tuple[float, float]:
+    ua = (params.get("uarch") or {}).get(uarch) or {}
+    power = ua.get("power") or {}
+    return float(power.get("p_static_w")), float(power.get("k_dyn_w_per_ghz_util"))
+
+
+def get_cap(params: Dict[str, Any], uarch: str, mode: str, l3_mb: int) -> float:
+    ua = (params.get("uarch") or {}).get(uarch) or {}
+    cap_w = ua.get("cap_w") or {}
+    mode_map = cap_w.get(mode) or {}
+    if str(l3_mb) in mode_map:
+        return float(mode_map[str(l3_mb)])
+    if l3_mb in mode_map:
+        return float(mode_map[l3_mb])
+    raise KeyError(f"Missing cap_w for uarch={uarch} mode={mode} l3_mb={l3_mb}")
+
+
+def run_label(roi_m: int, warmup_m: int) -> str:
+    return f"roi{roi_m}M_warm{warmup_m}M" if warmup_m > 0 else f"roi{roi_m}M"
+
+
+def outdir_spec(runs_root: Path, bench: str, roi_m: int, warmup_m: int, l3_mb: int, variant: str, tech: str) -> Path:
+    b = bench.replace(".", "_")
+    rl = run_label(roi_m, warmup_m)
+    return runs_root / f"{b}_{rl}" / f"sz{l3_mb}M" / f"{variant}_{tech}"
+
+
+def outdir_microbench(runs_root: Path, mb: str, roi_m: int, warmup_m: int, l3_mb: int, variant: str, tech: str) -> Path:
+    rl = run_label(roi_m, warmup_m)
+    return runs_root / f"{mb}_{rl}" / f"sz{l3_mb}M" / f"{variant}_{tech}"
+
+
+def outdir_kernel(runs_root: Path, kernel: str, roi_m: int, warmup_m: int, l3_mb: int, variant: str, tech: str) -> Path:
+    rl = run_label(roi_m, warmup_m)
+    return runs_root / f"{kernel}_{rl}" / f"sz{l3_mb}M" / f"{variant}_{tech}"
+
+
+def outdir_traces(runs_root: Path, workload: str, sim_n: int, l3_mb: int, variant: str, tech: str) -> Path:
+    return runs_root / workload / f"n{sim_n}" / f"l3_{l3_mb}MB" / f"{variant}_{tech}"
+
+
+LC_LABEL_RE = re.compile(r"^(naive_|sram_)?lc_c[0-9p]+_s[0-9p]+_d[0-9p]+_tf[0-9p]+_h[0-9p]+_f[0-9p]+_st[0-9p]+_pi[0-9]+$")
+
+HCA_LABEL_RE = re.compile(
+    r"^(baseline_sram_only|baseline_mram_only|baseline_\d+_sram|"
+    r"grid_s\d+_fill(?:sram|mram)|mig_s\d+_fill(?:sram|mram)_p\d+_c\d+)$"
+)
+
+def build_variants(variant_set: str, base_label: str, include_baselines: bool = True) -> List[str]:
+    baselines = ["baseline_sram_only", "baseline_mram_only"] if include_baselines else []
+    if variant_set == "baseline":
+        return baselines
+    if variant_set == "leakdvfs":
+        return [base_label]
+    if variant_set == "leakdvfs3":
+        return [base_label, f"naive_{base_label}", f"sram_{base_label}"]
+    if variant_set == "all":
+        return baselines + [base_label, f"naive_{base_label}", f"sram_{base_label}"]
+    raise ValueError(f"Unknown variant_set: {variant_set}")
+
+
+def write_env_sh(run_dir: Path, site: Dict[str, Any]) -> None:
+    env_map: Dict[str, str] = {}
+    # common
+    for k in (
+        "SNIPER_HOME", "SPEC_ROOT", "TRACE_ROOT",
+        "CONDA_SQLITE_LIB", "CONDA_LIB", "CONDA_PY",
+        "GCC_DIR",
+        # portable binaries
+        "MICROBENCH_BIN",
+        "BLIS_BIN", "SIMDJSON_BIN",
+        "BLIS_LIBDIR", "JSON_INPUT",
+    ):
+        if k in site and site[k] is not None:
+            env_map[k] = expand_path(str(site[k]))
+    env_map["REPO_ROOT"] = str(REPO_ROOT)
+
+    (run_dir / "env.sh").write_text(
+        "#!/usr/bin/env bash\nset -euo pipefail\n"
+        + "\n".join(sh_export_line(k, v) for k, v in env_map.items())
+        + "\n"
+    )
+
+
+def plan_spec(args: argparse.Namespace, site: Dict[str, Any], params: Dict[str, Any]) -> Path:
+    out_base = Path(args.out).resolve()
+    run_id = args.run_id or now_run_id(f"spec_{args.uarch}", args.tag or "")
+    run_dir = out_base / "spec" / run_id
+    runs_root = run_dir / "runs"
+    ensure_dir(runs_root)
+    ensure_dir(run_dir / "slurm")
+    write_env_sh(run_dir, site)
+
+    benches = args.benches.split(",") if args.benches else default_spec_benches()
+    l3_list = [int(x) for x in args.l3.split(",")]
+    p_static, k_dyn = get_params(params, args.uarch)
+
+    jobs: List[str] = []
+    for bench in benches:
+        for l3 in l3_list:
+            cap = get_cap(params, args.uarch, "single", l3)
+            lc_label = leakdvfs_variant_label(
+                cap_w=cap,
+                static_w=p_static if args.static_w is None else float(args.static_w),
+                dyn_w=k_dyn if args.dyn_w is None else float(args.dyn_w),
+                target_frac=float(args.target_frac),
+                hyst_w=float(args.hyst_w),
+                fmax_ghz=float(args.fmax_ghz),
+                step_ghz=float(args.step_ghz),
+                periodic_ins=int(args.ldvfs_periodic_ins),
+            )
+            variants = build_variants(args.variant_set, lc_label, include_baselines=True)
+
+            for var in variants:
+                outdir = outdir_spec(runs_root, bench, args.roi_m, args.warmup_m, l3, var, args.tech)
+                kv: Dict[str, str] = {
+                    "CAMPAIGN": "spec",
+                    "OUTDIR": str(outdir),
+                    "JOB_OUTDIR": str(outdir),
+                    "SNIPER_CONFIG": args.uarch,
+                    "TECH": args.tech,
+                    "BENCH": bench,
+                    "L3_MB": str(l3),
+                    "VARIANT": var,
+                    "ROI_M": str(args.roi_m),
+                    "WARMUP_M": str(args.warmup_m),
+                    "SPEC_SIZE": args.spec_size,
+                    "SIM_N": str(args.cores),
+                    "SKIP_SPEC_BUILD": str(args.skip_spec_build),
+                    "MAX_SIM_MIN": str(args.max_sim_min),
+                    "BASE_FREQ_GHZ": str(args.base_freq_ghz),
+                    "BASE_PERIODIC_INS": str(args.base_periodic_ins),
+                    "DIR_ENTRIES": str(args.dir_entries),
+                    "FAIL_ON_SIFT_ASSERT": str(int(not args.allow_sift_assert)),
+                    "SANITY_CHECK_NO_MEM": str(int(not args.allow_no_mem)),
+                }
+                if args.dvfs == "selective":
+                    kv["LC_SELECTIVE"] = "1"
+                    kv["LC_TOPK"] = str(args.topk)
+
+                # enforce no spaces
+                for k, v in kv.items():
+                    if any(ch.isspace() for ch in v):
+                        raise SystemExit(f"[ERR] whitespace in job token: {k}={v}")
+                jobs.append(" ".join(f"{k}={v}" for k, v in kv.items()))
+
+    (run_dir / "jobs.txt").write_text("\n".join(jobs) + ("\n" if jobs else ""))
+    print(f"[OK] planned SPEC jobs={len(jobs)} run_dir={run_dir}")
+    return run_dir
+
+
+def plan_traces(args: argparse.Namespace, site: Dict[str, Any], params: Dict[str, Any]) -> Path:
+    out_base = Path(args.out).resolve()
+    run_id = args.run_id or now_run_id(f"traces_{args.uarch}_n{args.cores}", args.tag or "")
+    run_dir = out_base / "traces" / run_id
+    runs_root = run_dir / "runs"
+    ensure_dir(runs_root)
+    ensure_dir(run_dir / "slurm")
+    write_env_sh(run_dir, site)
+
+    l3_list = [int(x) for x in args.l3.split(",")]
+    workloads = args.workloads.split(",") if args.workloads else default_trace_workloads(args.cores)
+    p_static, k_dyn = get_params(params, args.uarch)
+
+    jobs: List[str] = []
+    for w in workloads:
+        for l3 in l3_list:
+            cap = get_cap(params, args.uarch, "multicore", l3)
+            lc_label = leakdvfs_variant_label(
+                cap_w=cap,
+                static_w=p_static if args.static_w is None else float(args.static_w),
+                dyn_w=k_dyn if args.dyn_w is None else float(args.dyn_w),
+                target_frac=float(args.target_frac),
+                hyst_w=float(args.hyst_w),
+                fmax_ghz=float(args.fmax_ghz),
+                step_ghz=float(args.step_ghz),
+                periodic_ins=int(args.ldvfs_periodic_ins),
+            )
+            variants = build_variants(args.variant_set, lc_label, include_baselines=True)
+
+            for var in variants:
+                outdir = outdir_traces(runs_root, w, args.cores, l3, var, args.tech)
+                kv: Dict[str, str] = {
+                    "CAMPAIGN": "traces",
+                    "OUTDIR": str(outdir),
+                    "JOB_OUTDIR": str(outdir),
+                    "SNIPER_CONFIG": args.uarch,
+                    "TECH": args.tech,
+                    "WORKLOAD": w,
+                    "L3_MB": str(l3),
+                    "VARIANT": var,
+                    "ROI_M": str(args.roi_m),
+                    "WARMUP_M": str(args.warmup_m),
+                    "SIM_N": str(args.cores),
+                    "MAX_SIM_MIN": str(args.max_sim_min),
+                    "BASE_FREQ_GHZ": str(args.base_freq_ghz),
+                    "BASE_PERIODIC_INS": str(args.base_periodic_ins),
+                    "LC_FMIN_GHZ": str(args.fmin_ghz),
+                    "DIR_ENTRIES": str(args.dir_entries),
+                    "FAIL_ON_SIFT_ASSERT": str(int(not args.allow_sift_assert)),
+                }
+                if args.dvfs == "selective":
+                    kv["LC_SELECTIVE"] = "1"
+                    kv["LC_TOPK"] = str(args.topk)
+
+                for k, v in kv.items():
+                    if any(ch.isspace() for ch in v):
+                        raise SystemExit(f"[ERR] whitespace in job token: {k}={v}")
+                jobs.append(" ".join(f"{k}={v}" for k, v in kv.items()))
+
+    (run_dir / "jobs.txt").write_text("\n".join(jobs) + ("\n" if jobs else ""))
+    print(f"[OK] planned TRACES jobs={len(jobs)} run_dir={run_dir}")
+    return run_dir
+
+
+def plan_microbench(args: argparse.Namespace, site: Dict[str, Any], params: Dict[str, Any]) -> Path:
+    out_base = Path(args.out).resolve()
+    run_id = args.run_id or now_run_id(f"microbench_{args.uarch}", args.tag or "")
+    run_dir = out_base / "microbench" / run_id
+    runs_root = run_dir / "runs"
+    ensure_dir(runs_root)
+    ensure_dir(run_dir / "slurm")
+    write_env_sh(run_dir, site)
+
+    l3_list = [int(x) for x in args.l3.split(",")]
+    wss_list = [float(x) for x in (args.wss.split(",") if args.wss else ["2", "8", "32", "128", "256"])]
+    patterns = ["gather_blocked", "both_blocked"]
+    microbenches = args.microbenches.split(",") if args.microbenches else ["llc_read_hit", "pointer_chase", "gather_scatter"]
+
+    # IMPORTANT: microbench uses single-core caps in your current flow
+    p_static, k_dyn = get_params(params, args.uarch)
+
+    jobs: List[str] = []
+    for l3 in l3_list:
+        cap = get_cap(params, args.uarch, "single", l3)
+        lc_label = leakdvfs_variant_label(
+            cap_w=cap,
+            static_w=p_static if args.static_w is None else float(args.static_w),
+            dyn_w=k_dyn if args.dyn_w is None else float(args.dyn_w),
+            target_frac=float(args.target_frac),
+            hyst_w=float(args.hyst_w),
+            fmax_ghz=float(args.fmax_ghz),
+            step_ghz=float(args.step_ghz),
+            periodic_ins=int(args.ldvfs_periodic_ins),
+        )
+        variants = build_variants(args.variant_set, lc_label, include_baselines=True)
+
+        for var in variants:
+            for mb in microbenches:
+                if mb == "gather_scatter":
+                    for wss in wss_list:
+                        for pat in patterns:
+                            mode, loc = pat.split("_")
+                            outdir = outdir_microbench(runs_root, mb, args.roi_m, args.warmup_m, l3, var, args.tech)
+                            kv: Dict[str, str] = {
+                                "CAMPAIGN": "microbench",
+                                "OUTDIR": str(outdir),
+                                "JOB_OUTDIR": str(outdir),
+                                "SNIPER_CONFIG": args.uarch,
+                                "TECH": args.tech,
+                                "MICROBENCH": mb,
+                                "L3_MB": str(l3),
+                                "VARIANT": var,
+                                "ROI_M": str(args.roi_m),
+                                "WARMUP_M": str(args.warmup_m),
+                                "SIM_N": str(args.cores),
+                                "MAX_SIM_MIN": str(args.max_sim_min),
+                                "BASE_FREQ_GHZ": str(args.base_freq_ghz),
+                                "BASE_PERIODIC_INS": str(args.base_periodic_ins),
+                                "DIR_ENTRIES": str(args.dir_entries),
+                                "GS_WSS_MB": fmt_num(wss),
+                                "GS_MODE": mode,
+                                "GS_LOCALITY": loc,
+                                "FAIL_ON_SIFT_ASSERT": str(int(not args.allow_sift_assert)),
+                                "SANITY_CHECK_NO_MEM": str(int(not args.allow_no_mem)),
+                            }
+                            for k, v in kv.items():
+                                if any(ch.isspace() for ch in v):
+                                    raise SystemExit(f"[ERR] whitespace in job token: {k}={v}")
+                            jobs.append(" ".join(f"{k}={v}" for k, v in kv.items()))
+                    continue
+
+                if mb == "llc_read_hit":
+                    for wss in wss_list:
+                        outdir = outdir_microbench(runs_root, mb, args.roi_m, args.warmup_m, l3, var, args.tech)
+                        kv = {
+                            "CAMPAIGN": "microbench",
+                            "OUTDIR": str(outdir),
+                            "JOB_OUTDIR": str(outdir),
+                            "SNIPER_CONFIG": args.uarch,
+                            "TECH": args.tech,
+                            "MICROBENCH": mb,
+                            "L3_MB": str(l3),
+                            "VARIANT": var,
+                            "ROI_M": str(args.roi_m),
+                            "WARMUP_M": str(args.warmup_m),
+                            "SIM_N": str(args.cores),
+                            "MAX_SIM_MIN": str(args.max_sim_min),
+                            "BASE_FREQ_GHZ": str(args.base_freq_ghz),
+                            "BASE_PERIODIC_INS": str(args.base_periodic_ins),
+                            "DIR_ENTRIES": str(args.dir_entries),
+                            "LLC_HIT_WSS_MB": fmt_num(wss),
+                            "FAIL_ON_SIFT_ASSERT": str(int(not args.allow_sift_assert)),
+                            "SANITY_CHECK_NO_MEM": str(int(not args.allow_no_mem)),
+                        }
+                        for k, v in kv.items():
+                            if any(ch.isspace() for ch in v):
+                                raise SystemExit(f"[ERR] whitespace in job token: {k}={v}")
+                        jobs.append(" ".join(f"{k}={v}" for k, v in kv.items()))
+                    continue
+
+                if mb == "pointer_chase":
+                    for wss in wss_list:
+                        outdir = outdir_microbench(runs_root, mb, args.roi_m, args.warmup_m, l3, var, args.tech)
+                        kv = {
+                            "CAMPAIGN": "microbench",
+                            "OUTDIR": str(outdir),
+                            "JOB_OUTDIR": str(outdir),
+                            "SNIPER_CONFIG": args.uarch,
+                            "TECH": args.tech,
+                            "MICROBENCH": mb,
+                            "L3_MB": str(l3),
+                            "VARIANT": var,
+                            "ROI_M": str(args.roi_m),
+                            "WARMUP_M": str(args.warmup_m),
+                            "SIM_N": str(args.cores),
+                            "MAX_SIM_MIN": str(args.max_sim_min),
+                            "BASE_FREQ_GHZ": str(args.base_freq_ghz),
+                            "BASE_PERIODIC_INS": str(args.base_periodic_ins),
+                            "DIR_ENTRIES": str(args.dir_entries),
+                            "PTRCHASE_SIZE_MB": fmt_num(wss),
+                            "FAIL_ON_SIFT_ASSERT": str(int(not args.allow_sift_assert)),
+                            "SANITY_CHECK_NO_MEM": str(int(not args.allow_no_mem)),
+                        }
+                        for k, v in kv.items():
+                            if any(ch.isspace() for ch in v):
+                                raise SystemExit(f"[ERR] whitespace in job token: {k}={v}")
+                        jobs.append(" ".join(f"{k}={v}" for k, v in kv.items()))
+                    continue
+
+    (run_dir / "jobs.txt").write_text("\n".join(jobs) + ("\n" if jobs else ""))
+    print(f"[OK] planned MICROBENCH jobs={len(jobs)} run_dir={run_dir}")
+    return run_dir
+
+
+def plan_kernel(args: argparse.Namespace, site: Dict[str, Any], params: Dict[str, Any]) -> Path:
+    out_base = Path(args.out).resolve()
+    run_id = args.run_id or now_run_id(f"kernel_{args.uarch}", args.tag or "")
+    run_dir = out_base / "kernel" / run_id
+    runs_root = run_dir / "runs"
+    ensure_dir(runs_root)
+    ensure_dir(run_dir / "slurm")
+    write_env_sh(run_dir, site)
+
+    l3_list = [int(x) for x in args.l3.split(",")]
+    sizes = [int(x) for x in (args.blis_sizes.split(",") if args.blis_sizes else ["512", "1024", "1536", "2048"])]
+
+    # IMPORTANT: kernel uses single-core caps in your current flow
+    p_static, k_dyn = get_params(params, args.uarch)
+
+    jobs: List[str] = []
+    for l3 in l3_list:
+        cap = get_cap(params, args.uarch, "single", l3)
+        lc_label = leakdvfs_variant_label(
+            cap_w=cap,
+            static_w=p_static if args.static_w is None else float(args.static_w),
+            dyn_w=k_dyn if args.dyn_w is None else float(args.dyn_w),
+            target_frac=float(args.target_frac),
+            hyst_w=float(args.hyst_w),
+            fmax_ghz=float(args.fmax_ghz),
+            step_ghz=float(args.step_ghz),
+            periodic_ins=int(args.ldvfs_periodic_ins),
+        )
+        variants = build_variants(args.variant_set, lc_label, include_baselines=True)
+
+        for var in variants:
+            for n in sizes:
+                outdir = outdir_kernel(runs_root, "blis_gemm", args.roi_m, args.warmup_m, l3, var, args.tech)
+                kv: Dict[str, str] = {
+                    "CAMPAIGN": "kernel",
+                    "OUTDIR": str(outdir),
+                    "JOB_OUTDIR": str(outdir),
+                    "SNIPER_CONFIG": args.uarch,
+                    "TECH": args.tech,
+                    "KERNEL": "blis_gemm",
+                    "L3_MB": str(l3),
+                    "VARIANT": var,
+                    "ROI_M": str(args.roi_m),
+                    "WARMUP_M": str(args.warmup_m),
+                    "SIM_N": str(args.cores),
+                    "MAX_SIM_MIN": str(args.max_sim_min),
+                    "BASE_FREQ_GHZ": str(args.base_freq_ghz),
+                    "BASE_PERIODIC_INS": str(args.base_periodic_ins),
+                    "DIR_ENTRIES": str(args.dir_entries),
+                    "BLIS_M": str(n),
+                    "BLIS_N": str(n),
+                    "BLIS_K": str(n),
+                    "BLIS_REPS": str(args.blis_reps),
+                    "FAIL_ON_SIFT_ASSERT": str(int(not args.allow_sift_assert)),
+                    "SANITY_CHECK_NO_MEM": str(int(not args.allow_no_mem)),
+                }
+                for k, v in kv.items():
+                    if any(ch.isspace() for ch in v):
+                        raise SystemExit(f"[ERR] whitespace in job token: {k}={v}")
+                jobs.append(" ".join(f"{k}={v}" for k, v in kv.items()))
+
+    (run_dir / "jobs.txt").write_text("\n".join(jobs) + ("\n" if jobs else ""))
+    print(f"[OK] planned KERNEL jobs={len(jobs)} run_dir={run_dir}")
+    return run_dir
+
+
+def validate_run(run_dir: Path) -> None:
+    run_dir = run_dir.resolve()
+    jobs_path = run_dir / "jobs.txt"
+    env_path = run_dir / "env.sh"
+    if not jobs_path.exists():
+        raise SystemExit(f"[ERR] missing jobs.txt in {run_dir}")
+    if not env_path.exists():
+        raise SystemExit(f"[ERR] missing env.sh in {run_dir}")
+
+    jobs = [ln for ln in jobs_path.read_text().splitlines() if ln.strip()]
+    if not jobs:
+        raise SystemExit("[ERR] jobs.txt empty")
+
+    # Cheap parse of env.sh: just grep export KEY=VALUE
+    env_text = env_path.read_text()
+    env: Dict[str, str] = {}
+    for ln in env_text.splitlines():
+        ln = ln.strip()
+        if ln.startswith("export ") and "=" in ln:
+            kv = ln[len("export "):]
+            k, v = kv.split("=", 1)
+            env[k.strip()] = v.strip().strip("'").strip('"')
+
+    # Core requirements
+    sniper_home = env.get("SNIPER_HOME", "")
+    if not sniper_home or not (Path(sniper_home) / "run-sniper").exists():
+        raise SystemExit("[ERR] SNIPER_HOME/run-sniper missing; fix mx2/config/site.yaml")
+
+    # Engine scripts
+    for s in ("run_spec.sh", "run_traces.sh", "run_microbench.sh", "run_kernel.sh", "flags_common.sh"):
+        if not (MX2_ROOT / "engine" / s).exists():
+            raise SystemExit(f"[ERR] missing mx2/engine/{s}")
+
+    seen_outdirs = set()
+    for i, ln in enumerate(jobs):
+        d = parse_job_line(ln)
+        camp = d.get("CAMPAIGN", "")
+        outdir = d.get("OUTDIR", "")
+        var = d.get("VARIANT", "")
+
+        if not camp or not outdir or not var:
+            raise SystemExit(f"[ERR] job {i} missing CAMPAIGN/OUTDIR/VARIANT")
+        if outdir in seen_outdirs:
+            raise SystemExit(f"[ERR] duplicate OUTDIR: {outdir}")
+        seen_outdirs.add(outdir)
+        if var not in ("baseline_sram_only", "baseline_mram_only") and not LC_LABEL_RE.match(var):
+            raise SystemExit(f"[ERR] job {i} invalid VARIANT label: {var}")
+
+        # Campaign-specific requirements (from env.sh)
+        if camp == "hca":
+            if not HCA_LABEL_RE.match(var):
+                raise SystemExit(f"[ERR] job {i} invalid HCA VARIANT: {var}")
+        else:
+            if camp == "spec":
+                spec_root = env.get("SPEC_ROOT", "")
+                if not spec_root or not (Path(spec_root) / "shrc").exists():
+                    raise SystemExit("[ERR] SPEC_ROOT/shrc missing; fix mx2/config/site.yaml")
+            elif camp == "traces":
+                trace_root = env.get("TRACE_ROOT", "")
+                if not trace_root or not Path(trace_root).exists():
+                    raise SystemExit("[ERR] TRACE_ROOT missing; fix mx2/config/site.yaml")
+            elif camp == "microbench":
+                mb = env.get("MICROBENCH_BIN", "")
+                if not mb or not Path(mb).exists():
+                    raise SystemExit("[ERR] MICROBENCH_BIN missing; fix mx2/config/site.yaml")
+            elif camp == "kernel":
+                blis = env.get("BLIS_BIN", "")
+                if not blis or not Path(blis).exists():
+                    raise SystemExit("[ERR] BLIS_BIN missing; fix mx2/config/site.yaml")
+            else:
+                raise SystemExit(f"[ERR] unknown CAMPAIGN={camp} in job {i}")
+
+    print(f"[OK] validate: jobs={len(jobs)} unique_outdirs={len(seen_outdirs)}")
+
+
+def submit_run(run_dir: Path, dry_run: bool, extra_sbatch: List[str]) -> None:
+    run_dir = run_dir.resolve()
+    jobs = [ln for ln in (run_dir / "jobs.txt").read_text().splitlines() if ln.strip()]
+    n = len(jobs)
+    if n <= 0:
+        raise SystemExit("[ERR] no jobs")
+
+    sbatch_script = MX2_ROOT / "runner" / "array_runner.sbatch"
+    if not sbatch_script.exists():
+        raise SystemExit("[ERR] missing mx2/runner/array_runner.sbatch")
+
+    ensure_dir(run_dir / "slurm")
+
+    cmd = [
+        "sbatch",
+        "--chdir", str(run_dir),
+        "--job-name", "mx2",
+        "--array", f"0-{n-1}",
+        "--export", f"ALL,RUN_DIR={run_dir}",
+        str(sbatch_script),
+    ]
+    cmd = cmd[:1] + extra_sbatch + cmd[1:]
+
+    print("[INFO] sbatch:")
+    print(" ".join(shlex.quote(x) for x in cmd))
+    if dry_run:
+        return
+
+    r = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if r.returncode != 0:
+        print(r.stdout)
+        print(r.stderr, file=sys.stderr)
+        raise SystemExit(r.returncode)
+    print(r.stdout.strip())
+
+
+def verify_run(run_dir: Path) -> None:
+    run_dir = run_dir.resolve()
+    runs_root = run_dir / "runs"
+    if not runs_root.exists():
+        raise SystemExit(f"[ERR] missing runs/ in {run_dir}")
+
+    status_files = list(runs_root.rglob("mx2_status.yaml"))
+    ok = fail = running = unknown = 0
+    by_reason: Dict[str, int] = {}
+
+    for sf in status_files:
+        status = "unknown"
+        reason = "unknown"
+        for line in sf.read_text(errors="ignore").splitlines():
+            if line.startswith("status:"):
+                status = line.split(":", 1)[1].strip()
+            if line.startswith("reason:"):
+                reason = line.split(":", 1)[1].strip()
+        if status == "done":
+            ok += 1
+        elif status == "failed":
+            fail += 1
+            by_reason[reason] = by_reason.get(reason, 0) + 1
+        elif status == "running":
+            running += 1
+        else:
+            unknown += 1
+
+    print(f"[OK] verify: done={ok} failed={fail} running={running} unknown={unknown} status_files={len(status_files)}")
+    if by_reason:
+        print("failed_by_reason:")
+        for k in sorted(by_reason):
+            print(f"  {k}: {by_reason[k]}")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(prog="mx", description="mx2 (self-contained) planner/submitter")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    def add_common(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--out", default=str(REPO_ROOT / "results_test"))
+        p.add_argument("--run-id", default="")
+        p.add_argument("--tag", default="")
+        p.add_argument("--site", default=str(MX2_ROOT / "config" / "site.yaml"))
+        p.add_argument("--params", default=str(MX2_ROOT / "config" / "params.yaml"))
+
+        p.add_argument("--uarch", required=True, help="Sniper config name (gainestown/sunnycove/...)")
+        p.add_argument("--tech", default="mram14")
+        p.add_argument("--l3", default="2,32,128")
+        p.add_argument("--cores", type=int, default=4)
+
+        p.add_argument("--roi-m", type=int, default=1000)
+        p.add_argument("--warmup-m", type=int, default=200)
+
+        p.add_argument("--base-freq-ghz", type=float, default=2.66)
+        p.add_argument("--base-periodic-ins", type=int, default=2000000)
+        p.add_argument("--max-sim-min", type=int, default=0)
+        p.add_argument("--dir-entries", type=int, default=4194304)
+
+        p.add_argument("--variant-set", choices=["baseline", "leakdvfs", "leakdvfs3", "all"], default="all")
+        p.add_argument("--dvfs", choices=["global", "selective"], default="global")
+        p.add_argument("--topk", type=int, default=2)
+
+        # LeakDVFS knobs that go into the lc_* label
+        p.add_argument("--static-w", type=float, default=None)
+        p.add_argument("--dyn-w", type=float, default=None)
+        p.add_argument("--target-frac", type=float, default=1.0)
+        p.add_argument("--hyst-w", type=float, default=0.35)
+        p.add_argument("--fmax-ghz", type=float, default=4.0)
+        p.add_argument("--step-ghz", type=float, default=0.15)
+        p.add_argument("--ldvfs-periodic-ins", type=int, default=2000000)
+
+        p.add_argument("--allow-sift-assert", action="store_true")
+        p.add_argument("--allow-no-mem", action="store_true")
+
+    ps = sub.add_parser("plan-spec")
+    add_common(ps)
+    ps.add_argument("--benches", default="")
+    ps.add_argument("--spec-size", default="ref", choices=["test", "ref"])
+    ps.add_argument("--skip-spec-build", type=int, default=1)
+
+    pt = sub.add_parser("plan-traces")
+    add_common(pt)
+    pt.add_argument("--workloads", default="")
+    pt.add_argument("--fmin-ghz", type=float, default=1.6)
+
+    pm = sub.add_parser("plan-microbench")
+    add_common(pm)
+    pm.add_argument("--microbenches", default="")
+    pm.add_argument("--wss", default="")
+
+    pk = sub.add_parser("plan-kernel")
+    add_common(pk)
+    pk.add_argument("--blis-sizes", default="")
+    pk.add_argument("--blis-reps", type=int, default=50)
+
+    ph = sub.add_parser("plan-hca")
+    ph.add_argument("--out", default=str(REPO_ROOT / "results_test"))
+    ph.add_argument("--run-id", default="")
+    ph.add_argument("--tag", default="")
+    ph.add_argument("--site", default=str(MX2_ROOT / "config" / "site.yaml"))
+    ph.add_argument("--params", default=str(MX2_ROOT / "config" / "params.yaml"))
+    ph.add_argument("--uarch", required=True)
+
+    # HCA uses explicit SRAM/MRAM device techs
+    ph.add_argument("--sram-tech", required=True, help="e.g., sram14|sram7|sram32")
+    ph.add_argument("--mram-tech", required=True, help="e.g., mram14|mram32")
+    ph.add_argument("--tech-tag", default="", help="Optional label for outputs (default: <sram-tech>-<mram-tech>)")
+
+    ph.add_argument("--l3", default="2,32,128")
+    ph.add_argument("--cores", type=int, default=4)
+    ph.add_argument("--roi-m", type=int, default=1000)
+    ph.add_argument("--warmup-m", type=int, default=200)
+    ph.add_argument("--spec-size", default="ref", choices=["test", "ref"])
+    ph.add_argument("--skip-spec-build", type=int, default=1)
+
+    ph.add_argument("--benches", default="")
+    ph.add_argument("--variants", default="")   # comma-separated list; empty => DEFAULT_HCA_VARIANTS
+
+    ph.add_argument("--base-freq-ghz", type=float, default=2.66)
+    ph.add_argument("--base-periodic-ins", type=int, default=2000000)
+    ph.add_argument("--max-sim-min", type=int, default=0)
+    ph.add_argument("--dir-entries", type=int, default=4194304)
+
+    ph.add_argument("--allow-sift-assert", action="store_true")
+    ph.add_argument("--allow-no-mem", action="store_true")
+
+    vv = sub.add_parser("validate")
+    vv.add_argument("run_dir")
+
+    ss = sub.add_parser("submit")
+    ss.add_argument("run_dir")
+    ss.add_argument("--dry-run", action="store_true")
+    ss.add_argument("--sbatch", action="append", default=[])
+
+    vf = sub.add_parser("verify")
+    vf.add_argument("run_dir")
+
+    args = ap.parse_args()
+
+    if args.cmd.startswith("plan-"):
+        site = load_yaml(Path(args.site))
+        params = load_yaml(Path(args.params))
+
+        dvfs = getattr(args, "dvfs", None)
+        topk = getattr(args, "topk", None)
+        cores = getattr(args, "cores", None)
+
+
+        if dvfs == "selective" and topk is not None and cores is not None and topk > cores:
+            raise SystemExit("[ERR] topk > cores")
+
+        if args.cmd == "plan-spec":
+            plan_spec(args, site, params)
+        elif args.cmd == "plan-traces":
+            plan_traces(args, site, params)
+        elif args.cmd == "plan-microbench":
+            plan_microbench(args, site, params)
+        elif args.cmd == "plan-kernel":
+            plan_kernel(args, site, params)
+        elif args.cmd == "plan-hca":
+            site = load_yaml(Path(args.site))
+            plan_hca(args, site)
+        return
+
+    if args.cmd == "validate":
+        validate_run(Path(args.run_dir))
+        return
+
+    if args.cmd == "submit":
+        submit_run(Path(args.run_dir), args.dry_run, args.sbatch)
+        return
+
+    if args.cmd == "verify":
+        verify_run(Path(args.run_dir))
+        return
+
+
+if __name__ == "__main__":
+    main()
