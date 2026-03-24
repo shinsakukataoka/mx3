@@ -184,21 +184,22 @@ Line 132 was changed from `getApplicationCores()` to `getInt("general/total_core
 
 ## 5. PLM Sweep (Experimental Runs)
 
-### Seven Modes
+### Eight Modes
 
 | Mode | Jobs | What it runs |
 | :--- | :--- | :--- |
 | main | 60 | MRAM + LeakDVFS for all calibrated workloads × {n1,n4,n8} × {16,32,128}MB |
 | comparison | 26 | Static lift: n=1 at f=2.3; n=4 per-workload f* (128MB only) |
 | sensitivity | 420 | Read-latency + leakage-gap sweeps for n=1/n=4/n=8 × 3 caches × 7 devices |
-| counterfactual | 15 | MRAM LLC + SRAM leakage governor $\rightarrow$ isolates leakage benefit (n=1+n=4, 128MB) |
+| counterfactual | 60 | MRAM LLC + SRAM leakage governor → isolates leakage benefit (all n, all caches) |
 | tuning | 300 | h × I cross-product: h={0.05,0.10,0.20,0.30,0.40} × I={1M,2M,3M,4M}, n=1+n=4, 32MB |
 | cap_sensitivity | 120 | $P_{\text{cap}}$ ± MAE error bars, same configs as main |
+| add_TDP | 120 | Fixed platform TDP cap: 3 variants × 20 workloads × {32,128}MB (see §15) |
 
 ### Commands
 ```bash
 # Plan
-bash mx2/plm_sweep.sh --mode {main,comparison,sensitivity,counterfactual,tuning,cap_sensitivity}
+bash mx2/plm_sweep.sh --mode {main,comparison,sensitivity,counterfactual,tuning,cap_sensitivity,add_TDP}
 
 # Submit (all or specific array range)
 ~/COSC_498/miniMXE/mx2/bin/mx submit results_test/plm_sweep/<mode>
@@ -217,9 +218,10 @@ bash mx2/plm_sweep.sh --mode {main,comparison,sensitivity,counterfactual,tuning,
 ├── main/runs/<workload>/n{1,4,8}/l3_{16,32,128}MB/<variant>/
 ├── comparison/runs/<workload>/n{1,4}/l3_128MB/static_lift_<freq>/
 ├── sensitivity/runs/<workload>/n{1,4,8}/l3_{16,32,128}MB/<device_variant>/
-├── counterfactual/runs/<workload>/n{1,4}/l3_128MB/<variant>/
+├── counterfactual/runs/<workload>/n{1,4,8}/l3_{16,32,128}MB/<variant>/
 ├── tuning/runs/<workload>/n{1,4}/l3_32MB/<variant>/
-└── cap_sensitivity/runs/<workload>/n{1,4,8}/l3_{16,32,128}MB/<variant>/
+├── cap_sensitivity/runs/<workload>/n{1,4,8}/l3_{16,32,128}MB/<variant>/
+└── add_TDP/runs/<workload>/n{1,4,8}/l3_{32,128}MB/{lc_*,sram_lc_*,static_lift_*}/
 ```
 
 ---
@@ -467,3 +469,147 @@ This is the headline metric - does the PLM choose the same DVFS action (boost / 
 | 128MB n=1 | 81.4% |
 | 128MB n=4 | 96.2% |
 | 128MB n=8 | 99.0% |
+
+---
+
+## 15. Fixed TDP Study (`add_TDP`), Expanded Counterfactual & DVFS vs Static Lift
+
+Added to address reviewer feedback: *"does the result hold under a fixed platform power cap?"*
+
+### 15.1 Fixed TDP Cap Derivation
+
+Instead of per-workload caps, use a single fixed cap per $(n, C)$ group:
+$$\text{TDP}(n, C) = \max_{w \in \text{calibrated}} P_{\text{sram\_pkg}}(w, n, C, 2.2\text{GHz})$$
+
+Per-workload caps (from `params.yaml`) and resulting TDP:
+
+| Config | TDP (W) | TDP workload | Min cap (W) | Min workload | Spread |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| n=1, 32MB | 45.57 | exchange2 | 40.56 | gcc | 5.01W |
+| n=1, 128MB | 74.12 | exchange2 | 68.21 | xalancbmk | 5.91W |
+| n=4, 32MB | 83.94 | mcf+perl+exc+foto | 57.77 | xalanc×2+gcc×2 | 26.17W |
+| n=4, 128MB | 112.20 | mcf+perl+exc+foto | 85.42 | xalanc×2+gcc×2 | 26.78W |
+| n=8, 32MB | 162.79 | mcf×8 | 82.00 | mcf×4+gcc×4 | 80.79W |
+| n=8, 128MB | 183.27 | mcf×8 | 110.42 | mcf×4+gcc×4 | 72.85W |
+
+> **Note:** Multicore TDP has very large spread (26–81W). The fixed TDP is sized for the hottest workload, making it very generous for the others — this is a key factor in the results.
+
+### 15.2 Static Frequency Lift ($f^*$) Derivation
+
+$f^*$ = max frequency where $P_{\text{mram\_oracle}}(f, w) \le \text{TDP}$ for **all** calibrated workloads. Computed from oracle calibration runs in `results_test/plm_calibrate/`:
+
+**n=1, 32MB (TDP = 45.57W):** Bottleneck = exchange2 (45.3W at 2.2GHz, 45.9W at 2.3GHz). $f^* = 2.2$ GHz — **no static lift possible**.
+
+**n=1, 128MB (TDP = 74.12W):** Bottleneck = exchange2 (73.4W at 2.2, 74.0W at 2.3, **74.5W** at 2.4). $f^* = 2.3$ GHz (conservative; oracle data shows border at 2.3–2.4).
+
+> We used $f^* = 2.4$ GHz in the `add_TDP` study after rounding based on the PLM fit. The actual boundary varies by a few tenths of a GHz depending on how P\_total is interpolated.
+
+**n=4, 32MB (TDP = 83.94W):** Non-monotonic oracle power (workloads interleave phases). Bottleneck oscillates between mcf×4 and mcf+perl+exc+foto. $f^* = 3.5$ GHz (82.3W max at 3.5, 86.6W at 3.6).
+
+**n=4, 128MB (TDP = 112.20W):** $f^* = 3.6$ GHz (111.8W max at 3.6, 120.0W at 3.7).
+
+**n=8, 32/128MB (TDP = 162.79 / 183.27W):** $f^* = 3.8$ GHz for both. These generous caps enable very high static frequencies.
+
+### 15.3 Three Variants (120 jobs = 2 caches × 20 workloads × 3)
+
+1. **`lc_*` (mram_dvfs)** — MRAM LLC + LeakDVFS governor under fixed TDP
+2. **`sram_lc_*` (sram_lc)** — MRAM LLC + governor sees SRAM leakage (`LLC_LEAK_OVERRIDE`) → isolates leakage-specific benefit
+3. **`static_lift_f*`** — MRAM LLC at fixed $f^*$, no DVFS
+
+### 15.4 DVFS vs Static Lift — Fixed TDP (`add_TDP`)
+
+| Config | $f^*$ | Mean DVFS/Static | Result |
+| :--- | :--- | :--- | :--- |
+| **n=1, 32MB** | **2.2** | **1.021 (+2.1%)** | ✅ DVFS wins ($f^*$ = baseline, only DVFS can boost) |
+| **n=1, 128MB** | **2.4** | **1.004 (+0.4%)** | ≈ tie |
+| n=4, 32MB | 3.5 | 0.813 (−19%) | ❌ Static wins |
+| n=4, 128MB | 3.6 | 0.885 (−12%) | ❌ Static wins |
+| n=8, 32MB | 3.8 | 0.836 (−16%) | ❌ Static wins |
+| n=8, 128MB | 3.8 | 0.847 (−15%) | ❌ Static wins |
+
+### 15.5 DVFS vs Static Lift — Per-workload caps (`main` vs `comparison`, 128MB)
+
+The `comparison` study used a conservative $f^* = 2.3$ GHz (min across all n=1 workloads). Under per-workload caps, DVFS has tighter headroom and the comparison is fairer:
+
+| Workload | DVFS IPC | Static IPC | DVFS/Static | Result |
+| :--- | :--- | :--- | :--- | :--- |
+| perlbench | 1.18 | 1.05 | 1.124 | ✅ DVFS |
+| gcc | 0.80 | 0.77 | 1.039 | ✅ DVFS |
+| mcf | 0.96 | 0.93 | 1.032 | ✅ DVFS |
+| omnetpp | 0.93 | 0.86 | 1.081 | ✅ DVFS |
+| xalancbmk | 0.95 | 0.95 | 1.000 | ≈ tie |
+| deepsjeng | 0.15 | 0.17 | 0.882 | ❌ Static |
+| leela | 1.17 | 1.14 | 1.026 | ✅ DVFS |
+| xz | 1.19 | 1.07 | 1.112 | ✅ DVFS |
+| exchange2 | 1.30 | 1.16 | 1.121 | ✅ DVFS |
+| fotonik3d | 1.20 | 1.08 | 1.111 | ✅ DVFS |
+| **Mean** | | | **1.053** | **✅ DVFS wins 8/10** |
+
+DVFS wins 8 of 10 n=1 workloads under per-workload caps. Only `deepsjeng` loses consistently (DVFS oscillation disrupts its pipeline — IPC anomaly).
+
+### 15.6 DVFS vs sram_lc — Leakage Benefit Isolation
+
+The sram_lc variant uses MRAM hardware but tells the governor `llc_leak_w` = SRAM value, removing the leakage-specific headroom. This isolates: *"how much does the governor's knowledge of lower MRAM leakage help?"*
+
+**Fixed TDP (`add_TDP`):**
+
+| Config | DVFS/sram_lc | Interpretation |
+| :--- | :--- | :--- |
+| n=1, 32MB | 0.993 (−0.7%) | Noise |
+| n=1, 128MB | 1.007 (+0.7%) | Marginal MRAM benefit |
+| n=4, 128MB | 0.980 (−2.0%) | Noise (governor thrashing) |
+| n=8, 128MB | 1.000 | Flat |
+
+**Expanded counterfactual (per-workload caps, 60 jobs):**
+
+| Config | Mean Δ IPC (main − CF) | Direction |
+| :--- | :--- | :--- |
+| n=1, 16MB | +0.24% | Noise |
+| n=1, 32MB | +0.14% | Noise |
+| n=1, 128MB | −0.88% | ✅ Main slightly better (expected) |
+| n=4, 128MB | +0.15% | Noise |
+| n=8, 128MB | +3.59% | CF better (gcc×8 outlier) |
+
+**Root cause:** The $\Delta P_{\text{leak}}$ (0.07–0.71W) is below the DVFS step resolution (~2.45 W/step at 0.1 GHz). Both governors quantize to identical frequency staircases.
+
+### 15.7 Workload-Level Investigations
+
+#### Stable workloads: leela, exchange2, fotonik3d (n=1, 128MB)
+
+These three show DVFS ≈ sram_lc (ratio: 0.991, 1.000, 0.966). Investigation of sniper.log reveals **identical frequency distributions**:
+
+| Workload | DVFS changes | Steady-state freq pattern | Mean freq |
+| :--- | :--- | :--- | :--- |
+| leela | 1,035,623 | 517,622× @3.6 + 517,625× @3.7 | 3.02 |
+| exchange2 | 939,586 | 469,661× @3.6 + 469,660× @3.7 | 3.04 |
+| fotonik3d | 93,314 | 46,361× @3.6 + 46,420× @3.7 | 3.16 |
+
+Both mram_dvfs and sram_lc produce nearly identical distributions. The governor oscillates between the same two frequency steps because the 0.71W LLC leak difference cannot shift the oscillation boundary across the 2.45W step boundary.
+
+#### Thrashing outlier: gcc×8 (n=8, 32/128MB)
+
+gcc×8 shows sram_lc slightly *better* than mram_dvfs — counterintuitive since MRAM should have more headroom. Investigation shows both variants make only **20 DVFS changes** (the initial ramp from 2.2→4.0 GHz), then lock at 4.0 GHz for the entire ROI. The IPC difference comes from **warmup transients**: the PLM sees a power spike during early intervals (P\_est = 468–2923W), causing a brief throttle at different ramp steps. The step where the transient hits differs by one position due to the LLC leak offset, creating ~3% IPC noise. Once both settle at 4.0 GHz, behavior is identical.
+
+### 15.8 Crossover Analysis: When Does DVFS Beat Static Lift?
+
+| $f^*$ range | DVFS/Static | Regime |
+| :--- | :--- | :--- |
+| $f^* = 2.2$ GHz (baseline) | **1.02–1.12×** | ✅ DVFS is the *only* mechanism that can boost |
+| $f^* = 2.3$–2.4 GHz | **1.00–1.05×** | ✅ DVFS can boost above $f^*$ during low-power intervals |
+| $f^* \ge 3.5$ GHz | **0.79–0.90×** | ❌ Static lift outperforms; headroom is large enough for oracle static |
+
+DVFS beats static lift when the headroom is small (low $f^*$) and the governor's per-interval adaptation catches transient slack that a fixed frequency cannot exploit. Static lift wins when the headroom is large enough that a single well-chosen frequency dominates.
+
+**Caveat:** Static lift at $f^*$ requires **oracle knowledge** of the safe frequency for all workloads. DVFS is workload-agnostic — it adapts at runtime. This is a deployment trade-off: oracle static lift > DVFS in IPC, but DVFS works without workload characterization.
+
+### 15.9 Key Takeaways
+
+> 1. The LLC leakage differential ($\Delta P_{\text{leak}}$ = 0.07–0.71W) is **structurally real** but **below DVFS step resolution** (~2.45W per 0.1 GHz step). Per-interval governor awareness of the LLC leak term adds ≈0% measurable IPC benefit.
+>
+> 2. **DVFS gains at n=1 (3–12% per workload)** come from **phase-level exploitation** of transient power slack (workload phases with lower P\_nocache) combined with **asymmetric f\_min clamping** (governor can boost above baseline but never throttles below). These gains exist independently of the LLC leak magnitude.
+>
+> 3. The LLC leakage savings **enable** these gains indirectly: the cap $P_{\text{cap}} = P_{\text{sram}}(2.2)$ includes the full $\Delta P_{\text{leak}}$ as structural slack. Without eMRAM's lower leakage, the cap would leave zero average headroom and DVFS could only exploit interval-level noise.
+>
+> 4. **Static lift** outperforms DVFS when $f^*$ is high ($\ge 3.5$ GHz, multicore under generous TDP). DVFS outperforms static lift when $f^* \le 2.4$ GHz (n=1), where per-interval adaptation is more valuable than a conservative fixed frequency.
+>
+> 5. **deepsjeng** consistently shows DVFS worse than static — likely a pipeline-sensitive workload where frequency oscillation reduces effective IPC. Worth excluding or noting as an outlier.

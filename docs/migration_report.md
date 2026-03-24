@@ -335,3 +335,87 @@ mig_rf_p4c32	0.961	1.647	1.646	1.727	0.755	17.2%
 static_rf loses −4.3% IPC (dead SRAM ways → +69% L3 misses). Migration recovers only +0.4%. Note the dynE column: restricted fill uses less dynamic energy (0.74×) because fewer SRAM accesses occur, but this comes at a massive performance cost.
 
 ---
+
+## Experiment 7: Read-Only MRAM Latency Scaling (Study 9)
+
+**Goal:** Test whether migration becomes effective when MRAM reads are selectively degraded (write latency held at 1×), creating a crossover where SRAM reads become faster.
+
+**Sweep:** 4 MRAM read multipliers × 3 capacities × 4 workloads × 5 variants = 240 runs
+
+### MRAM Read Crossover Points
+
+| Capacity | SRAM rd | MRAM rd (1×) | Crossover mult | At crossover |
+| :--- | :--- | :--- | :--- | :--- |
+| **16MB** | 16 | 6 | **3×** | MRAM rd=18 > SRAM rd=16 |
+| **32MB** | 29 | 9 | **4×** | MRAM rd=36 > SRAM rd=29 |
+| **128MB** | 105 | 26 | **5×** | MRAM rd=130 > SRAM rd=105 |
+
+### Geomean IPC (normalized to all-MRAM, 4 workloads)
+
+**16MB** (SRAM rd=16):
+
+| Mult | all-MRAM | static_s4 | mig_p1c0 | static_rf | rf_p1c0 | Δmig−st | Δrf_mig |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 2×❌ | 1.000 | 1.043 | 1.044 | 0.954 | 0.991 | +0.1% | +3.9% |
+| **3×✅** | 1.000 | 1.044 | 1.047 | 0.953 | 0.994 | +0.3% | +4.3% |
+| 4×✅ | 1.000 | 1.047 | 1.050 | 0.957 | 0.999 | +0.3% | +4.5% |
+| 5×✅ | 1.000 | 1.050 | 1.053 | 0.957 | 1.004 | +0.3% | +4.8% |
+
+**32MB** (SRAM rd=29):
+
+| Mult | all-MRAM | static_s4 | mig_p1c0 | static_rf | rf_p1c0 | Δmig−st | Δrf_mig |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 2×❌ | 1.000 | 0.994 | 0.995 | 0.994 | 0.992 | +0.1% | −0.2% |
+| 3×❌ | 1.000 | 1.001 | 1.004 | 0.994 | 0.999 | +0.3% | +0.5% |
+| **4×✅** | 1.000 | 1.009 | 1.011 | 0.992 | 1.004 | +0.1% | +1.2% |
+| 5×✅ | 1.000 | 1.018 | 1.020 | 0.995 | 1.016 | +0.1% | +2.1% |
+
+**128MB** (SRAM rd=105):
+
+| Mult | all-MRAM | static_s4 | mig_p1c0 | static_rf | rf_p1c0 | Δmig−st | Δrf_mig |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 2×❌ | 1.000 | 0.931 | 0.932 | 0.999 | 0.957 | +0.1% | −4.2% |
+| 3×❌ | 1.000 | 0.967 | 0.968 | 1.000 | 0.980 | +0.1% | −2.0% |
+| 4×❌ | 1.000 | 1.000 | 1.001 | 0.999 | 1.001 | +0.1% | +0.3% |
+| **5×✅** | 1.000 | 1.030 | 1.032 | 1.000 | 1.015 | +0.1% | +1.5% |
+
+### Derived Findings
+
+1. **Static hybrid overtakes all-MRAM** roughly at/before the crossover point: 16MB at 2× (already), 32MB at 3×, 128MB at 4×. This confirms the SRAM write-latency benefit drives the static advantage.
+
+2. **Aggressive migration (p1_c0) adds ≤0.3% over static** at every multiplier and every capacity. Even past the crossover where SRAM is faster for both R+W, migration remains negligible because unrestricted LRU already distributes lines across SRAM ways.
+
+3. **Restricted-fill + aggressive migration (rf_p1c0)** recovers significantly from the static_rf penalty (Δrf_mig up to +4.8% at 16MB/5×). At 16MB/5× it reaches 1.004× (barely above all-MRAM). At 128MB/5× it reaches 1.015×. But it **never approaches unrestricted static** (1.050 at 16MB/5×).
+
+4. **Best-case migration gain over static**: +0.3% (16MB at 3-5×). The ceiling is flat — more aggressive MRAM read penalties don't increase migration's marginal contribution.
+
+5. **The read crossover doesn't change the migration story** — it makes *static hybrid* stronger (higher SRAM read value), but doesn't make *migration over static* more valuable.
+
+---
+
+## Experiment 8: Prior Paper Comparison at Iso-4MB (Study 8)
+
+**Goal:** Reproduce RWHCA (45nm) and APM (22nm) device models at 4MB and compare migration effectiveness across 3 tech nodes.
+
+**Result:** 3 sub-studies × 6 variants × 4 workloads = 72 runs (all complete)
+
+### Geomean IPC (normalized to all-MRAM, 4 workloads, 4MB)
+
+| | all-MRAM | static | mig_p1c0 | mig_p4c32 | static_rf | rf_p1c0 | Δmig−st |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **RWHCA 45nm** | 1.000 | 1.127 | 1.129 | 1.129 | 0.995 | 1.047 | **+0.1%** |
+| **APM 22nm** | 1.000 | 1.128 | 1.129 | 1.129 | 0.989 | 1.040 | **+0.1%** |
+| **Ours 14nm** | 1.000 | 1.128 | 1.129 | 1.129 | 0.989 | 1.040 | **+0.1%** |
+
+### Interpretation
+
+All three tech nodes produce **virtually identical** results: static hybrid gives +12.8% IPC, migration adds +0.1%.
+
+> [!IMPORTANT]
+> This is a **surprising null result** — we expected RWHCA/APM device models (where SRAM reads are faster) to show larger migration benefit. The reason they don't: at 4MB the cache is capacity-limited (high miss rates for memory-bound workloads), so the L3 miss rate dominates over per-access latency differences. The SRAM write-latency advantage drives the static benefit identically across all three models.
+
+The static_rf penalty differs slightly: RWHCA (0.995×) vs APM/Ours (0.989×). rf_p1c0 recovery is slightly better for RWHCA (1.047) than APM/Ours (1.040), suggesting the SRAM-read-faster property does help migration under restricted fills, but the effect is small.
+
+**Conclusion:** At iso-4MB capacity, **device model does not significantly affect migration effectiveness**. The migration redundancy is driven by unrestricted LRU placement, not by the SRAM/MRAM read-latency relationship. A larger cache (where the system is less capacity-bound) may be required to see the device-model effect.
+
+---

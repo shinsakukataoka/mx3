@@ -65,6 +65,8 @@ parse_lc_variant() {
     LC_SRAM=true
     label="${label#sram_}"
   fi
+  # Strip optional sel_ prefix (selective per-core DVFS label)
+  label="${label#sel_}"
   if [[ "$label" =~ ^lc_c([0-9p]+)_s([0-9p]+)_d([0-9p]+)_tf([0-9p]+)_h([0-9p]+)_f([0-9p]+)_st([0-9p]+)_pi([0-9]+)$ ]]; then
     LC_ENABLED=true
     CAP_W="${BASH_REMATCH[1]//p/.}"
