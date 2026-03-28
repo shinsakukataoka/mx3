@@ -49,4 +49,4 @@ done
 mkdir -p "$JOB_OUTDIR" "$RUN_DIR/slurm" 2>/dev/null || true
 
 cd "$REPO_ROOT"
-bash "$REPO_ROOT/mx2/runner/dispatch.sh"
+bash "$REPO_ROOT/mx3/runner/dispatch.sh"

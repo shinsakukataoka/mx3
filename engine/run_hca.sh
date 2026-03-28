@@ -36,7 +36,7 @@ export LD_LIBRARY_PATH="${CONDA_SQLITE_LIB}${CONDA_SQLITE_LIB:+:}${LD_LIBRARY_PA
 [[ -f "$SPEC_ROOT/shrc" ]] || { echo "[ERR] missing $SPEC_ROOT/shrc" >&2; exit 13; }
 
 # HCA flags
-source "$REPO_ROOT/mx2/engine/hca_flags_common.sh"
+source "$REPO_ROOT/mx3/engine/hca_flags_common.sh"
 
 fixed_freq_flags() {
   local per="$1"
@@ -72,7 +72,7 @@ if ! ls -dt "$RUN_ROOT"/run_* >/dev/null 2>&1; then
     echo "[ERR] No run_* for $BENCH and SKIP_SPEC_BUILD=1" >&2
     exit 6
   else
-    echo "[ERR] mx2 does not auto-build SPEC; build once and rerun with SKIP_SPEC_BUILD=1" >&2
+    echo "[ERR] mx3 does not auto-build SPEC; build once and rerun with SKIP_SPEC_BUILD=1" >&2
     exit 6
   fi
 fi

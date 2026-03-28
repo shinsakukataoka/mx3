@@ -112,8 +112,8 @@ def emit(prefix: str, blob: Dict[str, Any]) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Emit SRAM_* and MRAM_* device params as shell assignments.")
-    ap.add_argument("--l3", required=True, type=int, choices=[2, 4, 16, 32, 128])
-    ap.add_argument("--devices-dir", default="", help="Override devices dir (default: mx2/config/devices)")
+    ap.add_argument("--l3", required=True, type=int, help="LLC size in MB")
+    ap.add_argument("--devices-dir", default="", help="Override devices dir (default: mx3/config/devices)")
 
     # Non-HCA (single TECH)
     ap.add_argument("--tech", default="", help="Single tech name (e.g., sram14, mram14, sram7, mram32, sram32)")
@@ -126,7 +126,7 @@ def main() -> None:
 
     script_dir = Path(__file__).resolve().parent
     repo_root = script_dir.parent.parent  # mx2/engine -> mx2 -> repo
-    devices_dir = Path(args.devices_dir).resolve() if args.devices_dir else (repo_root / "mx2" / "config" / "devices")
+    devices_dir = Path(args.devices_dir).resolve() if args.devices_dir else (repo_root / "mx3" / "config" / "devices")
 
     try:
         if args.sram_tech or args.mram_tech:

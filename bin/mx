@@ -78,13 +78,13 @@ def load_yaml(path: Path) -> Dict[str, Any]:
 def find_repo_root() -> Path:
     here = Path(__file__).resolve()
     for p in [here] + list(here.parents):
-        if (p / "mx2").is_dir():
+        if (p / "mx3").is_dir():
             return p
     return Path.cwd().resolve()
 
 
 REPO_ROOT = find_repo_root()
-MX2_ROOT = (REPO_ROOT / "mx2").resolve()
+MX2_ROOT = (REPO_ROOT / "mx3").resolve()
 
 
 # ----------------------------
@@ -261,6 +261,10 @@ def plan_hca(args: argparse.Namespace, site: Dict[str, Any]) -> Path:
                     "FAIL_ON_SIFT_ASSERT": str(int(not args.allow_sift_assert)),
                     "SANITY_CHECK_NO_MEM": str(int(not args.allow_no_mem)),
                 }
+                if getattr(args, 'devices_dir', '') and args.devices_dir:
+                    kv["DEVICES_DIR"] = str(Path(args.devices_dir).resolve())
+                if getattr(args, 'mram_rd_mult', 0) and args.mram_rd_mult > 0:
+                    kv["MRAM_RD_MULT"] = str(args.mram_rd_mult)
 
                 for k, v in kv.items():
                     if any(ch.isspace() for ch in v):
@@ -728,12 +732,12 @@ def validate_run(run_dir: Path) -> None:
     # Core requirements
     sniper_home = env.get("SNIPER_HOME", "")
     if not sniper_home or not (Path(sniper_home) / "run-sniper").exists():
-        raise SystemExit("[ERR] SNIPER_HOME/run-sniper missing; fix mx2/config/site.yaml")
+        raise SystemExit("[ERR] SNIPER_HOME/run-sniper missing; fix mx3/config/site.yaml")
 
     # Engine scripts
     for s in ("run_spec.sh", "run_traces.sh", "run_microbench.sh", "run_kernel.sh", "flags_common.sh", "run_hca.sh", "hca_flags_common.sh"):
         if not (MX2_ROOT / "engine" / s).exists():
-            raise SystemExit(f"[ERR] missing mx2/engine/{s}")
+            raise SystemExit(f"[ERR] missing mx3/engine/{s}")
 
     seen_outdirs = set()
     for i, ln in enumerate(jobs):
@@ -760,19 +764,19 @@ def validate_run(run_dir: Path) -> None:
         if camp in ("hca", "spec"):
             spec_root = env.get("SPEC_ROOT", "")
             if not spec_root or not (Path(spec_root) / "shrc").exists():
-                raise SystemExit("[ERR] SPEC_ROOT/shrc missing; fix mx2/config/site.yaml")
+                raise SystemExit("[ERR] SPEC_ROOT/shrc missing; fix mx3/config/site.yaml")
         elif camp == "traces":
             trace_root = env.get("TRACE_ROOT", "")
             if not trace_root or not Path(trace_root).exists():
-                raise SystemExit("[ERR] TRACE_ROOT missing; fix mx2/config/site.yaml")
+                raise SystemExit("[ERR] TRACE_ROOT missing; fix mx3/config/site.yaml")
         elif camp == "microbench":
             mb = env.get("MICROBENCH_BIN", "")
             if not mb or not Path(mb).exists():
-                raise SystemExit("[ERR] MICROBENCH_BIN missing; fix mx2/config/site.yaml")
+                raise SystemExit("[ERR] MICROBENCH_BIN missing; fix mx3/config/site.yaml")
         elif camp == "kernel":
             blis = env.get("BLIS_BIN", "")
             if not blis or not Path(blis).exists():
-                raise SystemExit("[ERR] BLIS_BIN missing; fix mx2/config/site.yaml")
+                raise SystemExit("[ERR] BLIS_BIN missing; fix mx3/config/site.yaml")
         else:
             raise SystemExit(f"[ERR] unknown CAMPAIGN={camp} in job {i}")
 
@@ -789,7 +793,7 @@ def submit_run(run_dir: Path, dry_run: bool, extra_sbatch: List[str],
 
     sbatch_script = MX2_ROOT / "runner" / "array_runner.sbatch"
     if not sbatch_script.exists():
-        raise SystemExit("[ERR] missing mx2/runner/array_runner.sbatch")
+        raise SystemExit("[ERR] missing mx3/runner/array_runner.sbatch")
 
     ensure_dir(run_dir / "slurm")
 
@@ -806,7 +810,7 @@ def submit_run(run_dir: Path, dry_run: bool, extra_sbatch: List[str],
     cmd = [
         "sbatch",
         "--chdir", str(run_dir),
-        "--job-name", "mx2",
+        "--job-name", "mx3",
         *array_args,
         "--export", f"ALL,RUN_DIR={run_dir}",
         str(sbatch_script),
@@ -832,7 +836,7 @@ def verify_run(run_dir: Path) -> None:
     if not runs_root.exists():
         raise SystemExit(f"[ERR] missing runs/ in {run_dir}")
 
-    status_files = list(runs_root.rglob("mx2_status.yaml"))
+    status_files = list(runs_root.rglob("mx3_status.yaml"))
     ok = fail = running = unknown = 0
     by_reason: Dict[str, int] = {}
 
@@ -862,7 +866,7 @@ def verify_run(run_dir: Path) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(prog="mx", description="mx2 (self-contained) planner/submitter")
+    ap = argparse.ArgumentParser(prog="mx", description="mx3 (self-contained) planner/submitter")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     def add_common(p: argparse.ArgumentParser) -> None:
@@ -959,6 +963,10 @@ def main() -> None:
 
     ph.add_argument("--allow-sift-assert", action="store_true")
     ph.add_argument("--allow-no-mem", action="store_true")
+    ph.add_argument("--devices-dir", default="",
+                    help="Path to device YAML directory (overrides default)")
+    ph.add_argument("--mram-rd-mult", type=int, default=0,
+                    help="MRAM read-latency multiplier (0=disabled, 2/3/4/5 = multiply rd_cyc)")
 
     vv = sub.add_parser("validate")
     vv.add_argument("run_dir")

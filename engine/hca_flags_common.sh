@@ -20,18 +20,27 @@ hca_set_nvsim_params() {
   WB_PJ="${WB_PJ:-0}"
 
   local repo="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
-  local loader="$repo/mx2/engine/load_device_params.py"
+  local loader="$repo/mx3/engine/load_device_params.py"
 
   if [[ -n "${SRAM_TECH:-}" || -n "${MRAM_TECH:-}" ]]; then
     : "${SRAM_TECH:?SRAM_TECH must be set when using explicit HCA pairing}"
     : "${MRAM_TECH:?MRAM_TECH must be set when using explicit HCA pairing}"
+    local _dev_args=( --sram-tech "$SRAM_TECH" --mram-tech "$MRAM_TECH" --l3 "$L3_MB" )
+    [[ -n "${DEVICES_DIR:-}" ]] && _dev_args+=( --devices-dir "$DEVICES_DIR" )
     # shellcheck disable=SC1090
-    source <(python3 "$loader" --sram-tech "$SRAM_TECH" --mram-tech "$MRAM_TECH" --l3 "$L3_MB")
+    source <(python3 "$loader" "${_dev_args[@]}")
   else
     : "${TECH:?TECH must be set (or set SRAM_TECH+MRAM_TECH)}"
+    local _dev_args=( --tech "$TECH" --l3 "$L3_MB" )
+    [[ -n "${DEVICES_DIR:-}" ]] && _dev_args+=( --devices-dir "$DEVICES_DIR" )
     # legacy: single TECH file
     # shellcheck disable=SC1090
-    source <(python3 "$loader" --tech "$TECH" --l3 "$L3_MB")
+    source <(python3 "$loader" "${_dev_args[@]}")
+  fi
+
+  # Runtime MRAM read-latency multiplier (avoids per-multiplier YAML files)
+  if [[ -n "${MRAM_RD_MULT:-}" && "${MRAM_RD_MULT}" != "1" ]]; then
+    MRAM_RD_CYC=$(awk "BEGIN{printf \"%d\", ${MRAM_RD_CYC} * ${MRAM_RD_MULT}}")
   fi
 }
 

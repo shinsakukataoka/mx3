@@ -1,0 +1,48 @@
+2:
+  rd_cyc: 6
+  wr_cyc: 25
+  r_pj: 865
+  w_pj: 495
+  leak_mw: 11.9
+
+4:
+  rd_cyc: 7
+  wr_cyc: 25
+  r_pj: 875
+  w_pj: 538
+  leak_mw: 20.2
+
+8:
+  rd_cyc: 9
+  wr_cyc: 26
+  r_pj: 1031
+  w_pj: 695
+  leak_mw: 27.7
+
+16:
+  rd_cyc: 13
+  wr_cyc: 28
+  r_pj: 1151
+  w_pj: 814
+  leak_mw: 53.8
+
+32:
+  rd_cyc: 17
+  wr_cyc: 30
+  r_pj: 1633
+  w_pj: 1282
+  leak_mw: 102.4
+
+64:
+  rd_cyc: 31
+  wr_cyc: 37
+  r_pj: 1892
+  w_pj: 1550
+  leak_mw: 185.6
+
+128:
+  rd_cyc: 42
+  wr_cyc: 43
+  r_pj: 2476
+  w_pj: 2104
+  leak_mw: 134.8

@@ -32,7 +32,7 @@ export LD_LIBRARY_PATH="${CONDA_SQLITE_LIB}${CONDA_SQLITE_LIB:+:}${LD_LIBRARY_PA
 [[ -f "$SNIPER_HOME/scripts/roi-icount.py" ]] || { echo "[ERR] missing roi-icount.py" >&2; exit 12; }
 [[ -f "$SPEC_ROOT/shrc" ]] || { echo "[ERR] missing $SPEC_ROOT/shrc" >&2; exit 13; }
 
-source "$REPO_ROOT/mx2/engine/flags_common.sh"
+source "$REPO_ROOT/mx3/engine/flags_common.sh"
 
 # Build flags
 VAR_FLAGS=( $(flags_for_variant "$VARIANT") )
@@ -62,7 +62,7 @@ if ! ls -dt "$RUN_ROOT"/run_* >/dev/null 2>&1; then
     echo "[ERR] No run_* for $BENCH and SKIP_SPEC_BUILD=1" >&2
     exit 6
   else
-    echo "[ERR] SPEC build/run not implemented in mx2 yet (set SKIP_SPEC_BUILD=1 and pre-run SPEC once)" >&2
+    echo "[ERR] SPEC build/run not implemented in mx3 yet (set SKIP_SPEC_BUILD=1 and pre-run SPEC once)" >&2
     exit 6
   fi
 fi

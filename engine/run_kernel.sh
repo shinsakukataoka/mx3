@@ -28,7 +28,7 @@ export LD_LIBRARY_PATH="${CONDA_SQLITE_LIB}${CONDA_SQLITE_LIB:+:}${LD_LIBRARY_PA
 [[ -x "$SNIPER_HOME/run-sniper" ]] || { echo "[ERR] missing $SNIPER_HOME/run-sniper" >&2; exit 11; }
 [[ -f "$SNIPER_HOME/scripts/roi-icount.py" ]] || { echo "[ERR] missing roi-icount.py" >&2; exit 12; }
 
-source "$REPO_ROOT/mx2/engine/flags_common.sh"
+source "$REPO_ROOT/mx3/engine/flags_common.sh"
 
 mkdir -p "$OUTDIR"
 
@@ -53,7 +53,7 @@ APP_CMD=()
 EXTRA_LD=""
 case "$KERNEL" in
   blis_gemm)
-    : "${BLIS_BIN:?Set BLIS_BIN in mx2/config/site.yaml}"
+    : "${BLIS_BIN:?Set BLIS_BIN in mx3/config/site.yaml}"
     BLIS_M="${BLIS_M:-1536}"
     BLIS_N="${BLIS_N:-1536}"
     BLIS_K="${BLIS_K:-1536}"
@@ -64,8 +64,8 @@ case "$KERNEL" in
     fi
     ;;
   simdjson_ondemand)
-    : "${SIMDJSON_BIN:?Set SIMDJSON_BIN in mx2/config/site.yaml}"
-    : "${JSON_INPUT:?Set JSON_INPUT in mx2/config/site.yaml}"
+    : "${SIMDJSON_BIN:?Set SIMDJSON_BIN in mx3/config/site.yaml}"
+    : "${JSON_INPUT:?Set JSON_INPUT in mx3/config/site.yaml}"
     SIMDJSON_REPS="${SIMDJSON_REPS:-2000}"
     APP_CMD=( "$SIMDJSON_BIN" "$JSON_INPUT" "$SIMDJSON_REPS" )
     ;;

@@ -445,6 +445,25 @@ def compute_metrics(db_path: str, log_path: str, mode: str) -> Dict:
 
     mig_lines = float(sum_d(D, "L3", "mram_write_bytes_migrate")) / LINE_SIZE
 
+    # -------- per-core stats for weighted-speedup / ROI-slice --------
+    # D[(obj, met)] is a dict {core_id: delta_value}
+    per_core_instr = D.get(("performance_model", "instruction_count"), {})
+    if not per_core_instr:
+        per_core_instr = D.get(("core", "instructions"), {})
+    per_core_elapsed = D.get(("performance_model", "elapsed_time"), {})
+    if not per_core_elapsed:
+        per_core_elapsed = D.get(("thread", "elapsed_time"), {})
+
+    n_cores = max(len(per_core_instr), len(per_core_elapsed), 1)
+    per_core = {"sim_n": n_cores}
+    for c in sorted(set(per_core_instr.keys()) | set(per_core_elapsed.keys())):
+        ci = float(per_core_instr.get(c, 0))
+        ce = float(per_core_elapsed.get(c, 0))
+        per_core[f"instructions_c{c}"] = ci
+        per_core[f"elapsed_time_fs_c{c}"] = ce
+        per_core[f"ipc_c{c}"] = (ci / (ce / 1e15 * 2.2e9)) if ce > 0 else 0.0  # approx IPC at base freq
+        per_core[f"throughput_ips_c{c}"] = (ci / (ce / 1e15)) if ce > 0 else 0.0  # instr per second
+
     return {
         "roi_time_s": roi_time_s, "roi_time_source": roi_time_source,
         "cycles": cycles, "instructions": instr, "ipc": ipc, "tpi_fs": tpi_fs,
@@ -458,7 +477,8 @@ def compute_metrics(db_path: str, log_path: str, mode: str) -> Dict:
         "miss_rate_pct": miss_rate_pct, "mpki": mpki,
         "read_hits": r_hits, "write_hits": w_hits, "writebacks": wbs, "evictions": evictions,
         "read_hits_sram": rhs, "read_hits_mram": rhm, "write_hits_sram": whs, "write_hits_mram": whm,
-        "source": source
+        "source": source,
+        **per_core,
     }
 
 # ==========================================

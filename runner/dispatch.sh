@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." >/dev/null 2>&1 && pwd)"
 
-STATUS_FILE="$OUTDIR/mx2_status.yaml"
+STATUS_FILE="$OUTDIR/mx3_status.yaml"
 mkdir -p "$OUTDIR"
 
 ts_start="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -22,13 +22,13 @@ YAML
 rc=0
 set +e
 case "$CAMPAIGN" in
-  spec)       bash "$REPO_ROOT/mx2/engine/run_spec.sh";       rc=$? ;;
-  hca)        bash "$REPO_ROOT/mx2/engine/run_hca.sh";        rc=$? ;;
-  traces)     bash "$REPO_ROOT/mx2/engine/run_traces.sh";     rc=$? ;;
-  microbench)     bash "$REPO_ROOT/mx2/engine/run_microbench.sh";     rc=$? ;;
-  kernel)         bash "$REPO_ROOT/mx2/engine/run_kernel.sh";         rc=$? ;;
-  vf_sensitivity) bash "$REPO_ROOT/mx2/engine/run_vf_sensitivity.sh"; rc=$? ;;
-  plm_calib)     bash "$REPO_ROOT/mx2/engine/run_plm_calib.sh";     rc=$? ;;
+  spec)       bash "$REPO_ROOT/mx3/engine/run_spec.sh";       rc=$? ;;
+  hca)        bash "$REPO_ROOT/mx3/engine/run_hca.sh";        rc=$? ;;
+  traces)     bash "$REPO_ROOT/mx3/engine/run_traces.sh";     rc=$? ;;
+  microbench)     bash "$REPO_ROOT/mx3/engine/run_microbench.sh";     rc=$? ;;
+  kernel)         bash "$REPO_ROOT/mx3/engine/run_kernel.sh";         rc=$? ;;
+  vf_sensitivity) bash "$REPO_ROOT/mx3/engine/run_vf_sensitivity.sh"; rc=$? ;;
+  plm_calib)     bash "$REPO_ROOT/mx3/engine/run_plm_calib.sh";     rc=$? ;;
   *)
     echo "[ERR] unknown CAMPAIGN=$CAMPAIGN" >&2
     rc=2

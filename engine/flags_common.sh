@@ -8,11 +8,25 @@ set_nvsim_params() {
 
   # REPO_ROOT is set by engine scripts; fallback to relative
   local repo="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
-  local loader="$repo/mx2/engine/load_device_params.py"
+  local loader="$repo/mx3/engine/load_device_params.py"
 
   # Load SRAM_* and MRAM_* vars into this shell
+  local _dev_args=( --tech "$TECH" --l3 "$L3_MB" )
+  [[ -n "${DEVICES_DIR:-}" ]] && _dev_args+=( --devices-dir "$DEVICES_DIR" )
   # shellcheck disable=SC1090
-  source <(python3 "$loader" --tech "$TECH" --l3 "$L3_MB")
+  source <(python3 "$loader" "${_dev_args[@]}")
+
+  # Runtime MRAM read-latency multiplier (avoids per-multiplier YAML files)
+  if [[ -n "${MRAM_RD_MULT:-}" && "${MRAM_RD_MULT}" != "1" ]]; then
+    MRAM_RD_CYC=$(awk "BEGIN{printf \"%d\", ${MRAM_RD_CYC} * ${MRAM_RD_MULT}}")
+  fi
+
+  # Runtime MRAM leakage gap fraction: shrinks sram-mram leakage gap.
+  # 0.25 means new_gap = original_gap * 0.25 (most pessimistic for DVFS).
+  if [[ -n "${MRAM_LEAK_GAP_FRAC:-}" ]]; then
+    MRAM_LEAK_MW=$(awk -v sl="$SRAM_LEAK_MW" -v ml="$MRAM_LEAK_MW" -v f="$MRAM_LEAK_GAP_FRAC" \
+      'BEGIN{printf "%.6f", sl - (sl - ml) * f}')
+  fi
 }
 
 tech_common_flags() {
@@ -65,8 +79,9 @@ parse_lc_variant() {
     LC_SRAM=true
     label="${label#sram_}"
   fi
-  # Strip optional sel_ prefix (selective per-core DVFS label)
+  # Strip optional sel_ or hca_sN_ prefix (selective / HCA DVFS labels)
   label="${label#sel_}"
+  label="$(echo "$label" | sed 's/^hca_s[0-9]*_//')"
   if [[ "$label" =~ ^lc_c([0-9p]+)_s([0-9p]+)_d([0-9p]+)_tf([0-9p]+)_h([0-9p]+)_f([0-9p]+)_st([0-9p]+)_pi([0-9]+)$ ]]; then
     LC_ENABLED=true
     CAP_W="${BASH_REMATCH[1]//p/.}"
@@ -133,9 +148,25 @@ EOF
         exit 10
       fi
 
-      # mW -> W
+      # HCA override: allow sram_ways and fill_to to be set via env for HCA+DVFS
+      local _sw="${HCA_SRAM_WAYS:-0}"
+      local _fillto="${HCA_FILL_TO:-mram}"
+      local _mig="${HCA_MIG_ENABLED:-false}"
+      local _line_map="${HCA_LINE_MAP_MODE:-none}"
+      local _restrict="${HCA_RESTRICT_FILL_WAYS:-false}"
+
+      # Compute blended leak for HCA (weighted by sram_ways / 16)
+      local _leak_mw="$MRAM_LEAK_MW"
+      if [[ "$_sw" -gt 0 ]]; then
+        _leak_mw="$(awk -v sw="$_sw" -v A=16 -v ls="$SRAM_LEAK_MW" -v lm="$MRAM_LEAK_MW" \
+          'BEGIN{printf "%.6f", (ls*(sw/A) + lm*(1 - sw/A))}')"
+      fi
+
+      # mW -> W for LC governor (use blended HCA leak when applicable)
       local mram_leak_w
       mram_leak_w="$(awk -v mw="$MRAM_LEAK_MW" 'BEGIN{printf "%.6f", mw/1000.0}')"
+      local _llc_leak_w
+      _llc_leak_w="$(awk -v mw="$_leak_mw" 'BEGIN{printf "%.6f", mw/1000.0}')"
 
       local sel_enabled="false"
       local sel_k="1"
@@ -146,10 +177,12 @@ EOF
 
       cat <<EOF
 $(tech_common_flags)
--g perf_model/l3_cache/hybrid/sram_ways=0
--g perf_model/l3_cache/hybrid/fill_to=mram
--g perf_model/l3_cache/hybrid/migration/enabled=false
--g perf_model/l3_cache/llc/leak_power_mW=${MRAM_LEAK_MW}
+-g perf_model/l3_cache/hybrid/sram_ways=${_sw}
+-g perf_model/l3_cache/hybrid/fill_to=${_fillto}
+-g perf_model/l3_cache/hybrid/migration/enabled=${_mig}
+-g perf_model/l3_cache/hybrid/line_map/mode=${_line_map}
+-g perf_model/l3_cache/hybrid/restrict_fill_ways=${_restrict}
+-g perf_model/l3_cache/llc/leak_power_mW=${_leak_mw}
 -g perf_model/core/frequency=${BASE_FREQ_GHZ}
 -g dvfs/type=simple
 -g dvfs/transition_latency=2000
@@ -163,7 +196,7 @@ $(tech_common_flags)
 -g lc/hysteresis_w=${HYS_W}
 -g lc/static_w=${STATIC_W}
 -g lc/dyn_w_per_ghz=${DYN_W}
--g lc/llc_leak_w=${LLC_LEAK_OVERRIDE:-${mram_leak_w}}
+-g lc/llc_leak_w=${LLC_LEAK_OVERRIDE:-${_llc_leak_w}}
 -g lc/freq/min_ghz=${LC_FMIN_GHZ:-${BASE_FREQ_GHZ}}
 -g lc/freq/max_ghz=${FMAX_GHZ}
 -g lc/freq/step_ghz=${STEP_GHZ}

@@ -35,7 +35,7 @@ DIR_ENTRIES="${DIR_ENTRIES:-4194304}"
 MAX_SIM_MIN="${MAX_SIM_MIN:-0}"
 FAIL_ON_SIFT_ASSERT="${FAIL_ON_SIFT_ASSERT:-1}"
 
-source "$REPO_ROOT/mx2/engine/flags_common.sh"
+source "$REPO_ROOT/mx3/engine/flags_common.sh"
 
 # Build TRACE_LIST: supports both single bench (SIM_N copies) and A+B+C+D mixes.
 # For mixes the number of elements must equal SIM_N.

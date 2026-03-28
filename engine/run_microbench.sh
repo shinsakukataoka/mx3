@@ -29,7 +29,7 @@ export LD_LIBRARY_PATH="${CONDA_SQLITE_LIB}${CONDA_SQLITE_LIB:+:}${LD_LIBRARY_PA
 [[ -x "$SNIPER_HOME/run-sniper" ]] || { echo "[ERR] missing $SNIPER_HOME/run-sniper" >&2; exit 11; }
 [[ -f "$SNIPER_HOME/scripts/roi-icount.py" ]] || { echo "[ERR] missing roi-icount.py" >&2; exit 12; }
 
-source "$REPO_ROOT/mx2/engine/flags_common.sh"
+source "$REPO_ROOT/mx3/engine/flags_common.sh"
 
 mkdir -p "$OUTDIR"
 

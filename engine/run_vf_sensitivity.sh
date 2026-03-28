@@ -64,7 +64,7 @@ if [[ -n "${PLM_CFG_SH:-}" && -f "$PLM_CFG_SH" ]]; then
   source "$PLM_CFG_SH"
 fi
 
-source "$REPO_ROOT/mx2/engine/flags_common.sh"
+source "$REPO_ROOT/mx3/engine/flags_common.sh"
 
 # Build TRACE_LIST from WORKLOAD (supports A+B+C+D mixes)
 IFS='+' read -r -a MIX <<< "$WORKLOAD"
