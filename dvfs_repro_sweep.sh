@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# dvfs_repro_sweep.sh — DVFS reproduction study (210 jobs).
+# dvfs_repro_sweep.sh — DVFS reproduction study (270 jobs).
 #
-# Stage 1: Main DVFS     — 3 caps × 20 wl × 2 variants      = 120 jobs
-# Stage 2: Read latency  — 4 mults × 10 wl × 128MB           =  40 jobs
-# Stage 3: Leakage gap   — 3 fracs × 10 wl × 128MB           =  30 jobs
-# Stage 4: Cap ± MAE     — 2 dirs  × 10 wl × 128MB           =  20 jobs
-#                                                     Total   = 210 jobs
+# Stage 1:  Main DVFS        — 3 caps × 20 wl × 2 variants      = 120 jobs
+# Stage 1b: Counterfactual   — 3 caps × 20 wl (sram-DVFS)        =  60 jobs
+# Stage 2:  Read latency     — 4 mults × 10 wl × 128MB           =  40 jobs
+# Stage 3:  Leakage gap      — 3 fracs × 10 wl × 128MB           =  30 jobs
+# Stage 4:  Cap ± MAE        — 2 dirs  × 10 wl × 128MB           =  20 jobs
+#                                                         Total   = 270 jobs
 #
 # Usage:
 #   bash mx3/dvfs_repro_sweep.sh          # plan all
@@ -218,6 +219,35 @@ for CORES in 1 4 8; do
       # Variant 2: SRAM baseline (fixed frequency, no DVFS)
       emit_job "baseline_sram_only" "sram14" "$WORKLOAD" "$CORES" "$L3_MB"
     done
+  done
+done
+
+TOTAL_JOBS=$(( TOTAL_JOBS + JOB_COUNT ))
+echo "  -> $JOB_COUNT jobs"
+
+# ===============================================================
+# STAGE 1b: Counterfactual DVFS — sram-DVFS (60 jobs)
+#   MRAM cache but governor sees SRAM leakage → no boost headroom.
+#   3 caps × 20 wl × 1 variant
+#   n=4/n=8 use selective DVFS (k=1)
+# ===============================================================
+echo ""
+echo "=============================="
+echo " Stage 1b: Counterfactual (sram-DVFS)"
+echo "=============================="
+
+setup_stage "1b_counterfactual"
+
+for CORES in 1 4 8; do
+  for L3_MB in 16 32 128; do
+    _LLC_LEAK_OVERRIDE=$(get_sram_leak_w "$L3_MB")
+    mapfile -t WLOADS < <(get_calibrated_workloads "$CORES" "$L3_MB")
+    for WORKLOAD in "${WLOADS[@]}"; do
+      _cap=$(get_plm_cap "$WORKLOAD" "$CORES" "$L3_MB")
+      LC_BASE=$(make_lc_base "$_cap")
+      emit_job "sram_${LC_BASE}" "mram14" "$WORKLOAD" "$CORES" "$L3_MB"
+    done
+    unset _LLC_LEAK_OVERRIDE
   done
 done
 

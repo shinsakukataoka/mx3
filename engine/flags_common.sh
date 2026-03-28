@@ -182,7 +182,14 @@ $(tech_common_flags)
 -g perf_model/l3_cache/hybrid/migration/enabled=${_mig}
 -g perf_model/l3_cache/hybrid/line_map/mode=${_line_map}
 -g perf_model/l3_cache/hybrid/restrict_fill_ways=${_restrict}
--g perf_model/l3_cache/llc/leak_power_mW=${_leak_mw}
+EOF
+      if [[ -n "${LLC_LEAK_OVERRIDE:-}" ]]; then
+        _override_mw=$(awk "BEGIN {print ${LLC_LEAK_OVERRIDE} * 1000}")
+        echo "-g perf_model/l3_cache/llc/leak_power_mW=${_override_mw}"
+      else
+        echo "-g perf_model/l3_cache/llc/leak_power_mW=${_leak_mw}"
+      fi
+      cat <<EOF
 -g perf_model/core/frequency=${BASE_FREQ_GHZ}
 -g dvfs/type=simple
 -g dvfs/transition_latency=2000
