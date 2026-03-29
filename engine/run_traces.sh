@@ -54,12 +54,9 @@ mkdir -p "$OUTDIR"
 VAR_FLAGS=( $(flags_for_variant "$VARIANT") )
 VAR_FLAGS+=( -g perf_model/dram_directory/total_entries="${DIR_ENTRIES}" )
 
+# Apply naive leak override (sram_ handled in flags_common.sh via LLC_LEAK_OVERRIDE)
 if [[ "$VARIANT" == naive_* ]]; then
   VAR_FLAGS+=( -g lc/llc_leak_w=0 )
-elif [[ "$VARIANT" == sram_* ]]; then
-  set_nvsim_params
-  sram_leak_w="$(awk -v mw="$SRAM_LEAK_MW" 'BEGIN{printf "%.6f", mw/1000.0}')"
-  VAR_FLAGS+=( -g "lc/llc_leak_w=${sram_leak_w}" )
 fi
 
 # stop-by-icount expects ROI then warmup

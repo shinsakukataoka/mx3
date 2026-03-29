@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# dvfs_repro_sweep.sh — DVFS reproduction study (270 jobs).
+# dvfs_repro_sweep.sh — DVFS reproduction study (350 jobs).
 #
 # Stage 1:  Main DVFS        — 3 caps × 20 wl × 2 variants      = 120 jobs
 # Stage 1b: Counterfactual   — 3 caps × 20 wl (sram-DVFS)        =  60 jobs
-# Stage 2:  Read latency     — 4 mults × 10 wl × 128MB           =  40 jobs
-# Stage 3:  Leakage gap      — 3 fracs × 10 wl × 128MB           =  30 jobs
+# Stage 2:  Read latency     — 4 mults × (10 n1 + 5 n4 + 5 n8)  =  80 jobs  [mc first]
+# Stage 3:  Leakage gap      — 3 fracs × (10 n1 + 5 n4 + 5 n8)  =  60 jobs  [mc first]
 # Stage 4:  Cap ± MAE        — 2 dirs  × 10 wl × 128MB           =  20 jobs
-#                                                         Total   = 270 jobs
+#                                                         Total   = 340 jobs
 #
 # Usage:
 #   bash mx3/dvfs_repro_sweep.sh          # plan all
@@ -143,7 +143,11 @@ ENVSH
 emit_job() {
   local VARIANT="$1" TECH="$2" WORKLOAD="$3" CORES="$4" L3_MB="$5"
   local CAMP; if [[ "$CORES" -eq 1 ]]; then CAMP="spec"; else CAMP="traces"; fi
-  local OUTDIR="${RUNS_ROOT}/${WORKLOAD}/n${CORES}/l3_${L3_MB}MB/${VARIANT}_${TECH}"
+  local _sweep_sfx=""
+  [[ -n "${_MRAM_RD_MULT:-}"       ]] && _sweep_sfx+="_rdx${_MRAM_RD_MULT}"
+  [[ -n "${_MRAM_LEAK_GAP_FRAC:-}" ]] && _sweep_sfx+="_lk${_MRAM_LEAK_GAP_FRAC}"
+  local OUTDIR="${RUNS_ROOT}/${WORKLOAD}/n${CORES}/l3_${L3_MB}MB/${VARIANT}_${TECH}${_sweep_sfx}"
+
 
   local _line="CAMPAIGN=${CAMP}"
   _line+=" OUTDIR=${OUTDIR} JOB_OUTDIR=${OUTDIR}"
@@ -255,8 +259,8 @@ TOTAL_JOBS=$(( TOTAL_JOBS + JOB_COUNT ))
 echo "  -> $JOB_COUNT jobs"
 
 # ===============================================================
-# STAGE 2: MRAM Read-Latency Sweep (40 jobs)
-#   128MB × 4 multipliers × 10 n=1 workloads
+# STAGE 2: MRAM Read-Latency Sweep (80 jobs)
+#   128MB × 4 multipliers × (5 n4 mixes + 5 n8 mixes [MC FIRST] + 10 n1 workloads)
 # ===============================================================
 echo ""
 echo "=============================="
@@ -266,9 +270,24 @@ echo "=============================="
 setup_stage "2_read_latency"
 
 L3_MB=128
+
+# --- Multicore first (n=4 then n=8) ---
+for CORES in 4 8; do
+  mapfile -t WLOADS < <(get_calibrated_workloads "$CORES" "$L3_MB")
+  for MULT in 2 3 4 5; do
+    _MRAM_RD_MULT="$MULT"
+    for WORKLOAD in "${WLOADS[@]}"; do
+      _cap=$(get_plm_cap "$WORKLOAD" "$CORES" "$L3_MB")
+      LC_BASE=$(make_lc_base "$_cap")
+      emit_job "${LC_BASE}" "mram14" "$WORKLOAD" "$CORES" "$L3_MB"
+    done
+    unset _MRAM_RD_MULT
+  done
+done
+
+# --- Single-core (n=1) after ---
 CORES=1
 mapfile -t WLOADS < <(get_calibrated_workloads "$CORES" "$L3_MB")
-
 for MULT in 2 3 4 5; do
   _MRAM_RD_MULT="$MULT"
   for WORKLOAD in "${WLOADS[@]}"; do
@@ -283,8 +302,8 @@ TOTAL_JOBS=$(( TOTAL_JOBS + JOB_COUNT ))
 echo "  -> $JOB_COUNT jobs"
 
 # ===============================================================
-# STAGE 3: Leakage Gap Sensitivity (30 jobs)
-#   128MB × 3 gap fractions (0.25, 0.50, 0.75) × 10 n=1 workloads
+# STAGE 3: Leakage Gap Sensitivity (60 jobs)
+#   128MB × 3 gap fracs × (5 n4 mixes + 5 n8 mixes [MC FIRST] + 10 n1 workloads)
 # ===============================================================
 echo ""
 echo "=============================="
@@ -294,9 +313,24 @@ echo "=============================="
 setup_stage "3_leakage_gap"
 
 L3_MB=128
+
+# --- Multicore first (n=4 then n=8) ---
+for CORES in 4 8; do
+  mapfile -t WLOADS < <(get_calibrated_workloads "$CORES" "$L3_MB")
+  for FRAC in 0.25 0.50 0.75; do
+    _MRAM_LEAK_GAP_FRAC="$FRAC"
+    for WORKLOAD in "${WLOADS[@]}"; do
+      _cap=$(get_plm_cap "$WORKLOAD" "$CORES" "$L3_MB")
+      LC_BASE=$(make_lc_base "$_cap")
+      emit_job "${LC_BASE}" "mram14" "$WORKLOAD" "$CORES" "$L3_MB"
+    done
+    unset _MRAM_LEAK_GAP_FRAC
+  done
+done
+
+# --- Single-core (n=1) after ---
 CORES=1
 mapfile -t WLOADS < <(get_calibrated_workloads "$CORES" "$L3_MB")
-
 for FRAC in 0.25 0.50 0.75; do
   _MRAM_LEAK_GAP_FRAC="$FRAC"
   for WORKLOAD in "${WLOADS[@]}"; do
@@ -311,9 +345,12 @@ TOTAL_JOBS=$(( TOTAL_JOBS + JOB_COUNT ))
 echo "  -> $JOB_COUNT jobs"
 
 # ===============================================================
-# STAGE 4: Cap ± MAE Sensitivity (20 jobs)
-#   128MB × 2 directions (cap-MAE, cap+MAE) × 10 n=1 workloads
-#   n1_128M MAE = 0.663 W
+# STAGE 4: Cap ± MAE Sensitivity (60 jobs)
+#   128MB × 2 dirs × 10 n=1 workloads              = 20 jobs
+#    32MB × 2 dirs × (10 n=1 + 5 n=4 + 5 n=8)     = 40 jobs
+#   MAE values:
+#     n1_128M = 0.663 W
+#     n1_32M  = 0.640 W,  n4_32M = 0.480 W,  n8_32M = 1.015 W
 # ===============================================================
 echo ""
 echo "=============================="
@@ -322,6 +359,7 @@ echo "=============================="
 
 setup_stage "4_cap_mae"
 
+# --- 128MB, n=1 only (original 20 jobs) ---
 L3_MB=128
 CORES=1
 MAE=0.663
@@ -340,6 +378,29 @@ for WORKLOAD in "${WLOADS[@]}"; do
   LC_PLUS=$(make_lc_base "$_cap_plus")
   emit_job "${LC_PLUS}" "mram14" "$WORKLOAD" "$CORES" "$L3_MB"
 done
+
+# --- 32MB, all core counts (40 new jobs) ---
+L3_MB=32
+declare -A MAE_32=( [1]=0.640 [4]=0.480 [8]=1.015 )
+
+for CORES in 1 4 8; do
+  MAE="${MAE_32[$CORES]}"
+  mapfile -t WLOADS < <(get_calibrated_workloads "$CORES" "$L3_MB")
+  for WORKLOAD in "${WLOADS[@]}"; do
+    _cap=$(get_plm_cap "$WORKLOAD" "$CORES" "$L3_MB")
+
+    # Cap - MAE
+    _cap_minus=$(python3 -c "print(f'{max(${_cap} - ${MAE}, 1.0):.2f}')")
+    LC_MINUS=$(make_lc_base "$_cap_minus")
+    emit_job "${LC_MINUS}" "mram14" "$WORKLOAD" "$CORES" "$L3_MB"
+
+    # Cap + MAE
+    _cap_plus=$(python3 -c "print(f'{${_cap} + ${MAE}:.2f}')")
+    LC_PLUS=$(make_lc_base "$_cap_plus")
+    emit_job "${LC_PLUS}" "mram14" "$WORKLOAD" "$CORES" "$L3_MB"
+  done
+done
+unset MAE_32
 
 TOTAL_JOBS=$(( TOTAL_JOBS + JOB_COUNT ))
 echo "  -> $JOB_COUNT jobs"
