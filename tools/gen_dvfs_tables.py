@@ -1013,8 +1013,224 @@ def print_table9(base: str, sizes=None):
 
 
 # ---------------------------------------------------------------------------
+# Helpers for sweep tables 10/11
+# ---------------------------------------------------------------------------
+def _find_sweep_dir(sweep_root: str, bench: str, n_tag: str,
+                    l3_mb: int, suffix: str) -> Optional[str]:
+    """Find a sweep variant dir by suffix pattern (e.g. '_rdx2' or '_lk0.25')."""
+    sz_dir = os.path.join(sweep_root, bench, n_tag, f"l3_{l3_mb}MB")
+    if not os.path.isdir(sz_dir):
+        return None
+    for d in os.listdir(sz_dir):
+        if d.endswith(suffix) and d.startswith("lc_c"):
+            full = os.path.join(sz_dir, d)
+            if os.path.isdir(full):
+                return full
+    return None
+
+
+def _find_variant_dir(runs_root: str, bench: str, n_tag: str,
+                      l3_mb: int, pattern: str) -> Optional[str]:
+    """Find a variant dir matching a pattern (e.g. 'baseline_sram_only', 'lc_c*mram14')."""
+    sz_dir = os.path.join(runs_root, bench, n_tag, f"l3_{l3_mb}MB")
+    if not os.path.isdir(sz_dir):
+        return None
+    for d in os.listdir(sz_dir):
+        if pattern in d:
+            full = os.path.join(sz_dir, d)
+            if os.path.isdir(full):
+                return full
+    return None
+
+
+def _get_makespan(run_dir: str) -> Optional[float]:
+    """Get makespan in seconds from a run dir. Returns max per-core elapsed."""
+    if not run_dir:
+        return None
+    times = get_times_from_dir(run_dir)
+    if not times:
+        return None
+    valid = [t for t in times if t is not None and t > 0]
+    return max(valid) if valid else None
+
+
+def _print_sweep_table(base: str, table_num: int, title: str,
+                       sweep_stage: str, suffix_fn, param_values: list,
+                       param_label: str, l3_mb: int = 32):
+    """
+    Generic sweep table printer.
+    suffix_fn(val) -> suffix string, e.g. lambda m: f"_rdx{m}"
+    param_values: list of sweep param values, e.g. [2,3,4,5] or [0.25,0.50,0.75]
+    Shows: workload | cores | baseline_ms | {param: dvfs_ms dvfs_spdup cf_ms cf_spdup}
+    """
+    dvfs_root = os.path.join(base, "dvfs", "1_main_dvfs", "runs")
+    cf_root = os.path.join(base, "dvfs", "1b_counterfactual", "runs")
+    sweep_root = os.path.join(base, "dvfs", sweep_stage, "runs")
+
+    # Build header
+    param_hdrs = []
+    for v in param_values:
+        param_hdrs.append(f"D_{param_label}{v}")
+        param_hdrs.append(f"CF_{param_label}{v}")
+    col_w = 9
+    W = 42 + len(param_values) * 2 * (col_w + 1)
+
+    print("=" * W)
+    print(f"TABLE {table_num}: {title}")
+    print(f"  Values: speedup (%) vs SRAM14 baseline at {l3_mb}MB")
+    print("=" * W)
+    hdr = f"{'Workload':<35} {'N':>3} {'Base_ms':>8}"
+    for v in param_values:
+        hdr += f" {'D_'+str(v):>{col_w}} {'CF_'+str(v):>{col_w}}"
+    print(hdr)
+    print("-" * W)
+
+    for n_tag in ["n1", "n4", "n8"]:
+        n_cores = int(n_tag[1:])
+        # Find all benchmarks that have a baseline at this size/cores
+        if not os.path.isdir(dvfs_root):
+            continue
+        benches = sorted({
+            entry for entry in os.listdir(dvfs_root)
+            if os.path.isdir(os.path.join(dvfs_root, entry, n_tag,
+                                          f"l3_{l3_mb}MB"))
+        })
+        for bench in benches:
+            # SRAM14 baseline
+            s14_dir = _find_variant_dir(dvfs_root, bench, n_tag, l3_mb,
+                                        "baseline_sram_only")
+            base_t = _get_makespan(s14_dir)
+
+            cells = []
+            for v in param_values:
+                sfx = suffix_fn(v)
+                # DVFS sweep variant
+                d_dir = _find_sweep_dir(sweep_root, bench, n_tag, l3_mb, sfx)
+                d_t = _get_makespan(d_dir)
+                if base_t and d_t and d_t > 0:
+                    cells.append(f"{(base_t/d_t - 1)*100:>+{col_w}.2f}")
+                else:
+                    cells.append(f"{'—':>{col_w}}")
+
+                # CF variant — same suffix in the sweep dir but using CF
+                # CF runs live in 1b_counterfactual, without sweep suffix
+                # (CF is only at the base cap, not at sweep variants)
+                # So we just show the CF baseline speedup once
+                cf_dir = _find_variant_dir(cf_root, bench, n_tag, l3_mb,
+                                           "mram14")
+                cf_t = _get_makespan(cf_dir)
+                if base_t and cf_t and cf_t > 0:
+                    cells.append(f"{(base_t/cf_t - 1)*100:>+{col_w}.2f}")
+                else:
+                    cells.append(f"{'—':>{col_w}}")
+
+            bench_short = bench[:34]
+            base_ms = f"{base_t*1e3:>8.1f}" if base_t else f"{'—':>8}"
+            print(f"{bench_short:<35} {n_tag:>3} {base_ms} {' '.join(cells)}")
+
+        if n_tag != "n8":
+            print("-" * W)
+    print()
+
+
+def print_table10(base: str):
+    """Table 10: Read Latency Sweep at 32MB."""
+    _print_sweep_table(
+        base, 10,
+        "Read-Latency Sensitivity — 32MB (MRAM+DVFS vs CF)",
+        "2_read_latency",
+        lambda m: f"_rdx{m}",
+        [2, 3, 4, 5],
+        "x", l3_mb=32,
+    )
+
+
+def print_table11(base: str):
+    """Table 11: Leakage Gap Sweep at 32MB."""
+    _print_sweep_table(
+        base, 11,
+        "Leakage-Gap Sensitivity — 32MB (MRAM+DVFS vs CF)",
+        "3_leakage_gap",
+        lambda f: f"_lk{f}",
+        ["0.25", "0.50", "0.75"],
+        "lk", l3_mb=32,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+def print_table12(base: str):
+    """Table 12: Cap +/- MAE at 32MB, MRAM+DVFS only."""
+    import yaml
+    params_yaml = os.path.join(os.path.dirname(__file__), "..", "config", "params.yaml")
+    if not os.path.exists(params_yaml):
+        params_yaml = os.path.join(base, "..", "mx3", "config", "params.yaml")
+    try:
+        params = yaml.safe_load(open(params_yaml))
+    except Exception:
+        print("TABLE 12: Cannot load params.yaml -- skipping.")
+        return
+
+    caps_all = params.get("uarch", {}).get("sunnycove", {}).get("plm_cap_w", {})
+    MAE = {1: 0.640, 4: 0.480, 8: 1.015}
+    L3 = 32
+
+    dvfs_root = os.path.join(base, "dvfs", "1_main_dvfs", "runs")
+    mae_root = os.path.join(base, "dvfs", "4_cap_mae", "runs")
+
+    W = 80
+    print("=" * W)
+    print("TABLE 12: Cap +/- MAE Sensitivity -- 32MB, MRAM+DVFS only")
+    print(f"  MAE: n1={MAE[1]:.3f}W  n4={MAE[4]:.3f}W  n8={MAE[8]:.3f}W")
+    print("  Values: speedup (%) vs SRAM14 baseline")
+    print("=" * W)
+    print(f"{'Workload':<35} {'N':>3} {'Base_ms':>8} {'cap-MAE':>9} {'cap+MAE':>9}")
+    print("-" * W)
+
+    def lbl(v):
+        return f"{v:.2f}".replace(".", "p")
+
+    for n_tag in ["n1", "n4", "n8"]:
+        n = int(n_tag[1:])
+        mae = MAE[n]
+        wl_caps = caps_all.get(f"n{n}", {})
+        benches = sorted(wl for wl in wl_caps
+                         if isinstance(wl_caps[wl], dict) and L3 in wl_caps[wl])
+        for bench in benches:
+            cap = wl_caps[bench][L3]
+            cap_minus = max(cap - mae, 1.0)
+            cap_plus = cap + mae
+
+            s14_dir = _find_variant_dir(dvfs_root, bench, n_tag, L3,
+                                        "baseline_sram_only")
+            base_t = _get_makespan(s14_dir)
+
+            minus_dir = _find_variant_dir(mae_root, bench, n_tag, L3,
+                                          f"lc_c{lbl(cap_minus)}")
+            plus_dir = _find_variant_dir(mae_root, bench, n_tag, L3,
+                                         f"lc_c{lbl(cap_plus)}")
+            minus_t = _get_makespan(minus_dir)
+            plus_t = _get_makespan(plus_dir)
+
+            base_ms = f"{base_t*1e3:>8.1f}" if base_t else f"{'---':>8}"
+            if base_t and minus_t and minus_t > 0:
+                m_cell = f"{(base_t/minus_t - 1)*100:>+9.2f}"
+            else:
+                m_cell = f"{'---':>9}"
+            if base_t and plus_t and plus_t > 0:
+                p_cell = f"{(base_t/plus_t - 1)*100:>+9.2f}"
+            else:
+                p_cell = f"{'---':>9}"
+
+            bench_short = bench[:34]
+            print(f"{bench_short:<35} {n_tag:>3} {base_ms} {m_cell} {p_cell}")
+
+        if n_tag != "n8":
+            print("-" * W)
+    print()
+
+
 def main():
     args = parse_args()
     base = os.path.abspath(args.base)
@@ -1045,7 +1261,14 @@ def main():
         print_table8(data, base)
     if 9 in tables_to_print:
         print_table9(base, sizes)
+    if 10 in tables_to_print:
+        print_table10(base)
+    if 11 in tables_to_print:
+        print_table11(base)
+    if 12 in tables_to_print:
+        print_table12(base)
 
 
 if __name__ == "__main__":
     main()
+
