@@ -210,6 +210,16 @@ EOF
 -g lc/selective/enabled=${sel_enabled}
 -g lc/selective/k=${sel_k}
 EOF
+      # SmartDVFS: pass rank_mode if LC_RANK_MODE is set (util | ipc | util_ipc | util_sticky)
+      if [[ -n "${LC_RANK_MODE:-}" ]]; then
+        echo "-g lc/selective/rank_mode=${LC_RANK_MODE}"
+      fi
+      if [[ -n "${LC_STICKY_MARGIN:-}" ]]; then
+        echo "-g lc/selective/sticky_margin=${LC_STICKY_MARGIN}"
+      fi
+      if [[ -n "${LC_STICKY_TTL:-}" ]]; then
+        echo "-g lc/selective/sticky_ttl=${LC_STICKY_TTL}"
+      fi
 
       # If PLM_CFG_SH is set, add piecewise-linear model flags
       if [[ -n "${PLM_CFG_SH:-}" && -f "${PLM_CFG_SH}" ]]; then

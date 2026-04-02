@@ -384,19 +384,17 @@ def geomean(vals):
 # Table printers
 # ---------------------------------------------------------------------------
 def print_table1(data, sizes):
-    benches = sorted(set(k[0] for k in data if k[2] == "dvfs_sram14"))
+    benches = sorted(set(k[0] for k in data if k[2] == "sram7"))
     print("=" * 75)
     print("TABLE 1: No DVFS, No HCA — Raw Time (ms)")
     print("=" * 75)
-    print(f"{'Bench':<20} {'MB':>3} {'SRAM14':>8} {'SRAM7':>8} {'MRAM14':>8} {'MRAM/SRAM7':>11}")
+    print(f"{'Bench':<20} {'MB':>3} {'SRAM7':>8} {'MRAM14':>8} {'MRAM/SRAM7':>11}")
     print("-" * 65)
     for b in benches:
         for sz in sizes:
-            s14 = data.get((b, sz, "dvfs_sram14"))
             s7  = data.get((b, sz, "sram7"))
             m14 = data.get((b, sz, "mram14"))
             print(f"{b:<20} {sz:>3}"
-                  f" {(s14*1e3 if s14 else 0):>8.2f}"
                   f" {(s7*1e3  if s7  else 0):>8.2f}"
                   f" {(m14*1e3 if m14 else 0):>8.2f}"
                   f" {speedup_str(s7, m14):>11}")
@@ -404,7 +402,7 @@ def print_table1(data, sizes):
 
 
 def print_table2(data, sizes):
-    benches = sorted(set(k[0] for k in data if k[2] == "dvfs_sram14"))
+    benches = sorted(set(k[0] for k in data if k[2] == "sram7"))
     print("=" * 90)
     print("TABLE 2: HCA Static Partitioning (sram14+mram14) — Time (ms) & Speedup vs MRAM14")
     print("=" * 90)
@@ -429,22 +427,22 @@ def print_table2(data, sizes):
 
 
 def print_table3(data, sizes):
-    benches = sorted(set(k[0] for k in data if k[2] == "dvfs_sram14"))
+    benches = sorted(set(k[0] for k in data if k[2] == "sram7"))
     W = 100
     print("=" * W)
     print("TABLE 3: MRAM+DVFS vs baselines (and Counterfactual) — Time (ms)")
     print("  Spd_MRAM = MRAM_base / MRAM+DVFS (pure DVFS gain on top of cache)")
-    print("  Spd_DVFS = SRAM14   / MRAM+DVFS (total)  |  gap = Spd_DVFS - Spd_CF")
+    print("  Spd_DVFS = SRAM7    / MRAM+DVFS (total)  |  gap = Spd_DVFS - Spd_CF")
     print("=" * W)
-    print(f"{'Bench':<20} {'MB':>3} {'SRAM14':>8} {'MRAM_b':>8} {'M+DVFS':>8} {'CF':>8}"
+    print(f"{'Bench':<20} {'MB':>3} {'SRAM7':>8} {'MRAM_b':>8} {'M+DVFS':>8} {'CF':>8}"
           f" {'Spd_MRAM':>9} {'Spd_DVFS':>9} {'Spd_CF':>9} {'gap':>8}")
     print("-" * W)
     gm_m = {s: [] for s in sizes}   # MRAM_base/MRAM+DVFS
-    gm_d = {s: [] for s in sizes}   # S14/MRAM+DVFS
-    gm_c = {s: [] for s in sizes}   # S14/CF
+    gm_d = {s: [] for s in sizes}   # S7/MRAM+DVFS
+    gm_c = {s: [] for s in sizes}   # S7/CF
     for b in benches:
         for sz in sizes:
-            s14 = data.get((b, sz, "dvfs_sram14"))
+            s14 = data.get((b, sz, "sram7"))
             mb  = data.get((b, sz, "mram14"))       # MRAM baseline, no DVFS
             md  = data.get((b, sz, "mram_dvfs"))
             cf  = data.get((b, sz, "cf"))
@@ -573,15 +571,16 @@ def print_table6(hca_data):
 
 def print_table7(mc_data, sizes):
     mc_benches = sorted({k[0] for k in mc_data if k[2] == "dvfs_sram14"})
+    # NOTE: mc_data still uses dvfs_sram14 key since sram7 mc baselines are not collected here
     if not mc_benches:
         print("TABLE 7: No multicore data found.")
         return
     W = max(len(b) for b in mc_benches)
     print("=" * (W + 75))
-    print("TABLE 7: Multi-Core DVFS vs SRAM14 baseline (makespan ms, per-core avg speedup)")
+    print("TABLE 7: Multi-Core DVFS vs SRAM7 baseline (makespan ms, per-core avg speedup)")
     print("  Spd_DVFS/Spd_CF = per-core average speedup  |  gap = Spd_DVFS - Spd_CF")
     print("=" * (W + 75))
-    hdr = (f"{'Workload':<{W}} {'Cores':>5} {'MB':>3} {'SRAM14':>8}"
+    hdr = (f"{'Workload':<{W}} {'Cores':>5} {'MB':>3} {'SRAM7':>8}"
            f" {'M+DVFS':>8} {'CF':>8} {'Spd_DVFS':>10} {'Spd_CF':>10} {'gap':>9}")
     print(hdr)
     print("-" * len(hdr))
@@ -769,7 +768,7 @@ def print_table8(data: dict, base: str):
       E_nc_dyn    = (P_noncache_oracle - P_static) x elapsed_s   [same for all configs]
     Three configs compared: SRAM7, MRAM14 (no DVFS), MRAM14+DVFS.
     """
-    CAP_MB = 128
+    CAP_MB = 16
     P_STATIC_W = 20.08
 
     # Device params at 128MB
@@ -786,7 +785,7 @@ def print_table8(data: dict, base: str):
         return
 
     hca_root = os.path.join(base, "hca", "hca_sunnycove")
-    dvfs_dir = os.path.join(base, "dvfs", "1_main_dvfs", "runs")
+    dvfs_dir = os.path.join(base, "dvfs", "7_fixed_dvfs", "runs")
 
     W = 95
     print("=" * W)
@@ -810,7 +809,7 @@ def print_table8(data: dict, base: str):
                 candidate = os.path.join(dvfs_dir, bench_long, "n1", "l3_128MB")
                 if os.path.isdir(candidate):
                     for d in os.listdir(candidate):
-                        if d.startswith("lc_c") and "mram14" in d:
+                        if d.startswith("lc_"):
                             run_dir = os.path.join(candidate, d)
                             break
             elif find_tag == "sram7":
@@ -957,7 +956,7 @@ def print_table9(base: str, sizes=None):
                     full = os.path.join(sz_dir, d)
                     if d.startswith("lc_c") and "mram14" in d:
                         dvfs_dir = full
-                    elif "baseline_sram_only" in d:
+                    elif "baseline_sram_only_sram7" in d:
                         s14_dir = full
 
                 cf_sz_dir = os.path.join(cf_root, bench, n_tag, f"l3_{sz}MB")
@@ -1077,7 +1076,7 @@ def _print_sweep_table(base: str, table_num: int, title: str,
 
     print("=" * W)
     print(f"TABLE {table_num}: {title}")
-    print(f"  Values: speedup (%) vs SRAM14 baseline at {l3_mb}MB")
+    print(f"  Values: speedup (%) vs SRAM7 baseline at {l3_mb}MB")
     print("=" * W)
     hdr = f"{'Workload':<35} {'N':>3} {'Base_ms':>8}"
     for v in param_values:
@@ -1096,10 +1095,14 @@ def _print_sweep_table(base: str, table_num: int, title: str,
                                           f"l3_{l3_mb}MB"))
         })
         for bench in benches:
-            # SRAM14 baseline
-            s14_dir = _find_variant_dir(dvfs_root, bench, n_tag, l3_mb,
-                                        "baseline_sram_only")
-            base_t = _get_makespan(s14_dir)
+            # SRAM7 baseline: try DVFS dirs first (multicore), then HCA (n1)
+            s7_dir = _find_variant_dir(dvfs_root, bench, n_tag, l3_mb,
+                                       "baseline_sram_only_sram7")
+            if not s7_dir:
+                hca_root = os.path.join(base, "hca", "hca_sunnycove")
+                s7_dir = _find_hca_rundir(hca_root, bench, l3_mb,
+                                          "baseline_sram_only_sram7")
+            base_t = _get_makespan(s7_dir)
 
             cells = []
             for v in param_values:
@@ -1138,10 +1141,10 @@ def print_table10(base: str):
     _print_sweep_table(
         base, 10,
         "Read-Latency Sensitivity — 32MB (MRAM+DVFS vs CF)",
-        "2_read_latency",
+        "9_fixed_read_latency",
         lambda m: f"_rdx{m}",
         [2, 3, 4, 5],
-        "x", l3_mb=32,
+        "x", l3_mb=16,
     )
 
 
@@ -1150,10 +1153,10 @@ def print_table11(base: str):
     _print_sweep_table(
         base, 11,
         "Leakage-Gap Sensitivity — 32MB (MRAM+DVFS vs CF)",
-        "3_leakage_gap",
+        "10_fixed_leakage_gap",
         lambda f: f"_lk{f}",
         ["0.25", "0.50", "0.75"],
-        "lk", l3_mb=32,
+        "lk", l3_mb=16,
     )
 
 
@@ -1174,16 +1177,16 @@ def print_table12(base: str):
 
     caps_all = params.get("uarch", {}).get("sunnycove", {}).get("plm_cap_w", {})
     MAE = {1: 0.640, 4: 0.480, 8: 1.015}
-    L3 = 32
+    L3 = 16
 
     dvfs_root = os.path.join(base, "dvfs", "1_main_dvfs", "runs")
-    mae_root = os.path.join(base, "dvfs", "4_cap_mae", "runs")
+    mae_root = os.path.join(base, "dvfs", "11_fixed_cap_mae", "runs")
 
     W = 80
     print("=" * W)
     print("TABLE 12: Cap +/- MAE Sensitivity -- 32MB, MRAM+DVFS only")
     print(f"  MAE: n1={MAE[1]:.3f}W  n4={MAE[4]:.3f}W  n8={MAE[8]:.3f}W")
-    print("  Values: speedup (%) vs SRAM14 baseline")
+    print("  Values: speedup (%) vs SRAM7 baseline")
     print("=" * W)
     print(f"{'Workload':<35} {'N':>3} {'Base_ms':>8} {'cap-MAE':>9} {'cap+MAE':>9}")
     print("-" * W)
@@ -1191,7 +1194,7 @@ def print_table12(base: str):
     def lbl(v):
         return f"{v:.2f}".replace(".", "p")
 
-    for n_tag in ["n1", "n4", "n8"]:
+    for n_tag in ["n1"]:
         n = int(n_tag[1:])
         mae = MAE[n]
         wl_caps = caps_all.get(f"n{n}", {})
@@ -1202,9 +1205,14 @@ def print_table12(base: str):
             cap_minus = max(cap - mae, 1.0)
             cap_plus = cap + mae
 
-            s14_dir = _find_variant_dir(dvfs_root, bench, n_tag, L3,
-                                        "baseline_sram_only")
-            base_t = _get_makespan(s14_dir)
+            # SRAM7 baseline: try DVFS dirs first (multicore), then HCA (n1)
+            s7_dir = _find_variant_dir(dvfs_root, bench, n_tag, L3,
+                                       "baseline_sram_only_sram7")
+            if not s7_dir:
+                hca_root = os.path.join(base, "hca", "hca_sunnycove")
+                s7_dir = _find_hca_rundir(hca_root, bench, L3,
+                                          "baseline_sram_only_sram7")
+            base_t = _get_makespan(s7_dir)
 
             minus_dir = _find_variant_dir(mae_root, bench, n_tag, L3,
                                           f"lc_c{lbl(cap_minus)}")

@@ -1,0 +1,424 @@
+version: 1
+base_dir: /home/skataoka26/COSC_498/miniMXE/repro
+output_dir: /home/skataoka26/COSC_498/miniMXE/repro/agg
+absolute_paths_only: true
+
+outputs:
+  runs_csv: /home/skataoka26/COSC_498/miniMXE/repro/agg/runs.csv
+  per_core_csv: /home/skataoka26/COSC_498/miniMXE/repro/agg/per_core.csv
+  per_interval_csv: /home/skataoka26/COSC_498/miniMXE/repro/agg/per_interval.csv
+  comparisons_csv: /home/skataoka26/COSC_498/miniMXE/repro/agg/comparisons.csv
+  sweeps_csv: /home/skataoka26/COSC_498/miniMXE/repro/agg/sweeps.csv
+  master_json: /home/skataoka26/COSC_498/miniMXE/repro/agg/master.json
+
+roots:
+  fixed_dvfs: /home/skataoka26/COSC_498/miniMXE/repro/dvfs/7_fixed_dvfs/runs
+  smart_ttl: /home/skataoka26/COSC_498/miniMXE/repro/dvfs/6_smart_dvfs_ttl/runs
+  main_dvfs: /home/skataoka26/COSC_498/miniMXE/repro/dvfs/1_main_dvfs/runs
+  counterfactual: /home/skataoka26/COSC_498/miniMXE/repro/dvfs/1b_counterfactual/runs
+  baseline_run: /home/skataoka26/COSC_498/miniMXE/repro/dvfs/12_baseline_run/runs
+  fixed_read_latency: /home/skataoka26/COSC_498/miniMXE/repro/dvfs/9_fixed_read_latency/runs
+  fixed_leakage_gap: /home/skataoka26/COSC_498/miniMXE/repro/dvfs/10_fixed_leakage_gap/runs
+  fixed_cap_mae: /home/skataoka26/COSC_498/miniMXE/repro/dvfs/11_fixed_cap_mae/runs
+  hca: /home/skataoka26/COSC_498/miniMXE/repro/hca/hca_sunnycove
+  oracle_csv: /home/skataoka26/COSC_498/miniMXE/repro/calibration/plm_calib_sunnycove/runs/oracle_points.csv
+  params_yaml: /home/skataoka26/COSC_498/miniMXE/mx3/config/params.yaml
+
+metrics:
+  base_freq_ghz: 2.2
+  package_static_w: 20.08
+  mae_w_by_n:
+    n1: 0.640
+    n4: 0.480
+    n8: 1.015
+
+device_params:
+  sram7:16: { leak_mw: 125.03, r_pj: 109.0, w_pj: 103.0 }
+  sram7:32: { leak_mw: 250.05, r_pj: 182.0, w_pj: 173.0 }
+  sram7:128: { leak_mw: 1000.20, r_pj: 727.0, w_pj: 694.0 }
+  sram14:16: { leak_mw: 125.03, r_pj: 109.0, w_pj: 103.0 }
+  sram14:32: { leak_mw: 250.05, r_pj: 182.0, w_pj: 173.0 }
+  sram14:128: { leak_mw: 1000.20, r_pj: 727.0, w_pj: 694.0 }
+  mram14:16: { leak_mw: 25.60, r_pj: 86.0, w_pj: 84.0 }
+  mram14:32: { leak_mw: 51.20, r_pj: 171.0, w_pj: 167.0 }
+  mram14:128: { leak_mw: 204.80, r_pj: 685.0, w_pj: 668.0 }
+
+source_priorities:
+  baseline_run: 10
+  main_dvfs: 20
+  fixed_dvfs: 30
+  smart_ttl: 40
+  counterfactual: 50
+  hca: 60
+  fixed_read_latency: 70
+  fixed_leakage_gap: 80
+  fixed_cap_mae: 90
+
+baseline_preferences:
+  SRAM7: [baseline_run, main_dvfs, hca]
+  MRAM14: [baseline_run, main_dvfs, hca]
+  MainDVFS: [main_dvfs]
+  Counterfactual: [counterfactual, fixed_dvfs, smart_ttl]
+  smartDVFS+TTL: [smart_ttl]
+  smartCounterfactual: [smart_ttl]
+  counterfactual_fixed: [fixed_dvfs]
+  selectiveDVFS: [fixed_dvfs]
+  S4_RF: [hca]
+
+variant_rules:
+  - id: selective_fixed_dvfs
+    sources: [fixed_dvfs]
+    config_label: selectiveDVFS
+    config_group: dvfs
+    technology: mram14
+    stage: fixed_dvfs
+    match:
+      prefixes: ["lc_"]
+      excludes_prefixes: ["lc_sram"]
+
+  - id: fixed_counterfactual
+    sources: [fixed_dvfs]
+    config_label: counterfactual_fixed
+    config_group: counterfactual
+    technology: sram14
+    stage: fixed_dvfs
+    match:
+      prefixes: ["sram_lc"]
+
+  - id: smart_ttl_dvfs
+    sources: [smart_ttl]
+    config_label: smartDVFS+TTL
+    config_group: dvfs
+    technology: mram14
+    stage: smart_ttl
+    match:
+      prefixes: ["lc_c"]
+      suffixes: ["_mram14"]
+      excludes_prefixes: ["lc_sram"]
+
+  - id: smart_ttl_counterfactual
+    sources: [smart_ttl]
+    config_label: smartCounterfactual
+    config_group: counterfactual
+    technology: sram14
+    stage: smart_ttl
+    match:
+      prefixes: ["sram_lc_c"]
+      suffixes: ["_mram14"]
+
+  - id: main_dvfs_run
+    sources: [main_dvfs]
+    config_label: MainDVFS
+    config_group: dvfs
+    technology: mram14
+    stage: main_dvfs
+    match:
+      prefixes: ["lc_"]
+      substrings: ["mram14"]
+      excludes_prefixes: ["lc_sram"]
+
+  - id: main_sram7_baseline
+    sources: [main_dvfs, baseline_run]
+    config_label: SRAM7
+    config_group: baseline
+    technology: sram7
+    stage: baseline
+    match:
+      substrings: ["baseline_sram_only_sram7"]
+
+  - id: main_sram14_baseline
+    sources: [main_dvfs]
+    config_label: SRAM14
+    config_group: baseline
+    technology: sram14
+    stage: baseline
+    match:
+      substrings: ["baseline_sram_only"]
+      excludes_substrings: ["baseline_sram_only_sram7"]
+
+  - id: main_mram14_baseline
+    sources: [main_dvfs, baseline_run]
+    config_label: MRAM14
+    config_group: baseline
+    technology: mram14
+    stage: baseline
+    match:
+      substrings: ["baseline_mram_only_mram14"]
+
+  - id: counterfactual_stage1b
+    sources: [counterfactual]
+    config_label: Counterfactual
+    config_group: counterfactual
+    technology: sram14
+    stage: counterfactual
+    match:
+      prefixes: ["sram_lc"]
+      substrings: ["mram14"]
+
+  - id: hca_sram7_baseline
+    sources: [hca]
+    config_label: SRAM7
+    config_group: baseline
+    technology: sram7
+    stage: hca
+    match:
+      substrings: ["baseline_sram_only_sram7"]
+
+  - id: hca_sram14_baseline
+    sources: [hca]
+    config_label: SRAM14
+    config_group: baseline
+    technology: sram14
+    stage: hca
+    match:
+      substrings: ["baseline_sram_only_sram14"]
+
+  - id: hca_mram14_baseline
+    sources: [hca]
+    config_label: MRAM14
+    config_group: baseline
+    technology: mram14
+    stage: hca
+    match:
+      substrings: ["baseline_mram_only_mram14"]
+
+  - id: hca_static_s4
+    sources: [hca]
+    config_label: HCA_S4
+    config_group: hca_static
+    technology: null
+    stage: hca
+    match:
+      prefixes: ["noparity_s4_fillmram"]
+      excludes_substrings: ["_p4_c32", "_p1_c0", "_rf"]
+
+  - id: hca_static_s8
+    sources: [hca]
+    config_label: HCA_S8
+    config_group: hca_static
+    technology: null
+    stage: hca
+    match:
+      prefixes: ["noparity_s8_fillmram"]
+
+  - id: hca_static_s12
+    sources: [hca]
+    config_label: HCA_S12
+    config_group: hca_static
+    technology: null
+    stage: hca
+    match:
+      prefixes: ["noparity_s12_fillmram"]
+
+  - id: hca_s4_unrestricted
+    sources: [hca]
+    config_label: S4_UNR
+    config_group: hca_unrestricted_fill
+    technology: null
+    stage: hca
+    match:
+      substrings: ["noparity_s4_fillmram"]
+      excludes_substrings: ["_rf", "_p4_c32", "_p1_c0"]
+
+  - id: hca_p4c32_unrestricted
+    sources: [hca]
+    config_label: P4C32_UNR
+    config_group: hca_unrestricted_fill
+    technology: null
+    stage: hca
+    match:
+      substrings: ["noparity_s4_fillmram_p4_c32"]
+      excludes_substrings: ["_rf"]
+
+  - id: hca_p1c0_unrestricted
+    sources: [hca]
+    config_label: P1C0_UNR
+    config_group: hca_unrestricted_fill
+    technology: null
+    stage: hca
+    match:
+      substrings: ["noparity_s4_fillmram_p1_c0"]
+      excludes_substrings: ["_rf"]
+
+  - id: hca_s4_restricted
+    sources: [hca]
+    config_label: S4_RF
+    config_group: hca_restricted_fill
+    technology: null
+    stage: hca
+    match:
+      substrings: ["noparity_s4_fillmram_rf"]
+      excludes_substrings: ["_p4_c32", "_p1_c0"]
+
+  - id: hca_p4c32_restricted
+    sources: [hca]
+    config_label: P4C32_RF
+    config_group: hca_restricted_fill
+    technology: null
+    stage: hca
+    match:
+      substrings: ["noparity_s4_fillmram_rf_p4_c32"]
+
+  - id: hca_p1c0_restricted
+    sources: [hca]
+    config_label: P1C0_RF
+    config_group: hca_restricted_fill
+    technology: null
+    stage: hca
+    match:
+      substrings: ["noparity_s4_fillmram_rf_p1_c0"]
+
+  - id: fixed_read_latency_sweep
+    sources: [fixed_read_latency]
+    config_label: ReadLatencySweepDVFS
+    config_group: sweep_read_latency
+    technology: mram14
+    stage: fixed_read_latency
+    match:
+      prefixes: ["lc_c"]
+      suffixes: ["_rdx2", "_rdx3", "_rdx4", "_rdx5"]
+
+  - id: fixed_leakage_gap_sweep
+    sources: [fixed_leakage_gap]
+    config_label: LeakageGapSweepDVFS
+    config_group: sweep_leakage_gap
+    technology: mram14
+    stage: fixed_leakage_gap
+    match:
+      prefixes: ["lc_c"]
+      regexes: ["_lk(0\\.25|0\\.50|0\\.75)$"]
+
+  - id: fixed_cap_mae_sweep
+    sources: [fixed_cap_mae]
+    config_label: CapMAESweepDVFS
+    config_group: sweep_cap_mae
+    technology: mram14
+    stage: fixed_cap_mae
+    match:
+      prefixes: ["lc_c"]
+      substrings: ["mram14"]
+
+comparison_rules:
+  - id: selective_fixed_vs_cf
+    subject_labels: [selectiveDVFS]
+    baseline_labels: [counterfactual_fixed]
+    baseline_pick_key: counterfactual_fixed
+    n_tags: [n1]
+    formula: makespan_speedup
+
+  - id: selective_fixed_vs_sram7
+    subject_labels: [selectiveDVFS]
+    baseline_labels: [SRAM7]
+    baseline_pick_key: SRAM7
+    n_tags: [n1]
+    formula: makespan_speedup
+
+  - id: selective_fixed_vs_mram14
+    subject_labels: [selectiveDVFS]
+    baseline_labels: [MRAM14]
+    baseline_pick_key: MRAM14
+    n_tags: [n1]
+    formula: makespan_speedup
+
+  - id: smart_ttl_vs_cf
+    subject_labels: [smartDVFS+TTL]
+    baseline_labels: [smartCounterfactual]
+    baseline_pick_key: smartCounterfactual
+    n_tags: [n4, n8]
+    formula: ws_over_n
+
+  - id: smart_ttl_vs_sram7
+    subject_labels: [smartDVFS+TTL]
+    baseline_labels: [SRAM7]
+    baseline_pick_key: SRAM7
+    n_tags: [n4, n8]
+    formula: ws_over_n
+
+  - id: smart_ttl_vs_mram14
+    subject_labels: [smartDVFS+TTL]
+    baseline_labels: [MRAM14]
+    baseline_pick_key: MRAM14
+    n_tags: [n4, n8]
+    formula: ws_over_n
+
+  - id: main_dvfs_vs_mram14
+    subject_labels: [MainDVFS]
+    baseline_labels: [MRAM14]
+    baseline_pick_key: MRAM14
+    formula: makespan_speedup
+
+  - id: main_dvfs_vs_sram7
+    subject_labels: [MainDVFS]
+    baseline_labels: [SRAM7]
+    baseline_pick_key: SRAM7
+    formula: makespan_speedup
+
+  - id: cf_vs_sram7
+    subject_labels: [Counterfactual]
+    baseline_labels: [SRAM7]
+    baseline_pick_key: SRAM7
+    formula: makespan_speedup
+
+  - id: hca_s4_vs_mram14
+    subject_labels: [HCA_S4]
+    baseline_labels: [MRAM14]
+    baseline_pick_key: MRAM14
+    n_tags: [n1]
+    formula: makespan_speedup
+
+  - id: hca_s8_vs_mram14
+    subject_labels: [HCA_S8]
+    baseline_labels: [MRAM14]
+    baseline_pick_key: MRAM14
+    n_tags: [n1]
+    formula: makespan_speedup
+
+  - id: hca_s12_vs_mram14
+    subject_labels: [HCA_S12]
+    baseline_labels: [MRAM14]
+    baseline_pick_key: MRAM14
+    n_tags: [n1]
+    formula: makespan_speedup
+
+  - id: unrestricted_fill_vs_mram14
+    subject_labels: [HCA_S4, P4C32_UNR, P1C0_UNR]
+    baseline_labels: [MRAM14]
+    baseline_pick_key: MRAM14
+    n_tags: [n1]
+    formula: runtime_speedup_and_normalized_metrics
+
+  - id: restricted_s4rf_vs_mram14
+    subject_labels: [S4_RF]
+    baseline_labels: [MRAM14]
+    baseline_pick_key: MRAM14
+    n_tags: [n1]
+    formula: restricted_fill_bundle
+
+  - id: restricted_p4c32_vs_s4rf
+    subject_labels: [P4C32_RF]
+    baseline_labels: [S4_RF]
+    baseline_pick_key: S4_RF
+    n_tags: [n1]
+    formula: restricted_fill_bundle
+
+  - id: restricted_p1c0_vs_s4rf
+    subject_labels: [P1C0_RF]
+    baseline_labels: [S4_RF]
+    baseline_pick_key: S4_RF
+    n_tags: [n1]
+    formula: restricted_fill_bundle
+
+schema_notes:
+  runs_csv:
+    - one row per completed run
+    - contains runtime, throughput, hit/miss behavior, DRAM, stall fractions, energy, promotions, DVFS summaries, and sweep metadata
+  per_core_csv:
+    - one row per core per run
+    - contains elapsed time, instructions, utilization, IPC proxies, miss metrics, DRAM metrics, and per-core energy counters
+  per_interval_csv:
+    - one row per [LC] DVFS interval per run from sniper.log
+    - contains power estimate, target cap, lookup freq, interval IPC, and min/avg/max frequency
+  comparisons_csv:
+    - long-format derived metrics for speedups, WS/N, normalized miss/write ratios, promotions, and MRAM-vs-counterfactual deltas
+  sweeps_csv:
+    - long-format sweep points for read-latency, leakage-gap, and cap±MAE experiments with SRAM7 and CF context
