@@ -38,8 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /opt/project
 
 # Copy mx3 repo into the layout expected by the scripts: /opt/project/mx3
-COPY mx3 /opt/project/mx3
-
+COPY . /opt/project/mx3
 # Clone Sniper fork
 RUN git clone --branch dvfs --single-branch https://github.com/shinsakukataoka/sniper-hybrid.git /opt/project/sniper
 
