@@ -1,0 +1,10 @@
+SNIPER_HOME: /opt/project/sniper
+SPEC_ROOT: /mnt/spec2017
+TRACE_ROOT: /mnt/traces
+CONDA_SQLITE_LIB: /usr/lib/x86_64-linux-gnu
+CONDA_LIB: /usr/lib/x86_64-linux-gnu
+CONDA_PY: /usr/bin/python3
+GCC_DIR: /usr
+MICROBENCH_BIN: /opt/project/mx3/third_party/microbench/bin
+BLIS_BIN: /opt/project/mx3/third_party/blis/blis_gemm_driver
+BLIS_LIBDIR: /opt/project/mx3/third_party/blis/install/lib

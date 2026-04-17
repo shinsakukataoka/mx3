@@ -76,16 +76,25 @@ SMART_TTL_ROOT = None
 MAIN_DVFS_ROOT = None
 BASELINE_RUN_ROOT = None
 HCA_ROOT = None
+DVFS_L3_MB_OVERRIDE = None   # when set, DVFS dirs use this size instead of the calibrated one
 
 
-def init_paths(base: str):
-    global FIXED_DVFS_ROOT, SMART_TTL_ROOT, MAIN_DVFS_ROOT, BASELINE_RUN_ROOT, HCA_ROOT
-    FIXED_DVFS_ROOT = os.path.join(base, "dvfs", "7_fixed_dvfs", "runs")
-    SMART_TTL_ROOT = os.path.join(base, "dvfs", "6_smart_dvfs_ttl", "runs")
+def init_paths(base: str, dvfs_root: str = None, dvfs_l3_mb: int = None):
+    global FIXED_DVFS_ROOT, SMART_TTL_ROOT, MAIN_DVFS_ROOT, BASELINE_RUN_ROOT, HCA_ROOT, DVFS_L3_MB_OVERRIDE
+
+    DVFS_L3_MB_OVERRIDE = dvfs_l3_mb
+
+    if dvfs_root:
+        expanded = os.path.expanduser(dvfs_root)
+        FIXED_DVFS_ROOT = expanded
+        SMART_TTL_ROOT = expanded
+    else:
+        FIXED_DVFS_ROOT = os.path.join(base, "dvfs", "7_fixed_dvfs", "runs")
+        SMART_TTL_ROOT = os.path.join(base, "dvfs", "6_smart_dvfs_ttl", "runs")
+
     MAIN_DVFS_ROOT = os.path.join(base, "dvfs", "1_main_dvfs", "runs")
     BASELINE_RUN_ROOT = os.path.join(base, "dvfs", "12_baseline_run", "runs")
     HCA_ROOT = os.path.join(base, "hca", "hca_sunnycove")
-
 
 # -----------------------------------------------------------------------------
 # SQLite helpers
@@ -159,20 +168,38 @@ def _parse_sim_out_times(path: str):
     return None
 
 
+def _read_sim_n(run_dir: str):
+    """Read sim_n from run.yaml — the actual number of active threads."""
+    try:
+        ry = os.path.join(run_dir, "run.yaml")
+        with open(ry) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("sim_n:"):
+                    return int(line.split(":")[1].strip())
+    except Exception:
+        pass
+    return None
+
+
 def get_times_from_dir(run_dir: str):
     if not run_dir or not os.path.isdir(run_dir):
         return None
 
+    sim_n = _read_sim_n(run_dir)
+
     sim_out = os.path.join(run_dir, "sim.out")
     times = _parse_sim_out_times(sim_out)
     if times:
+        if sim_n and len(times) > sim_n:
+            times = times[:sim_n]
         return times
 
     db_path = os.path.join(run_dir, "sim.stats.sqlite3")
     if not os.path.exists(db_path):
         return None
 
-    n_cores = get_num_cores(db_path)
+    n_cores = sim_n or get_num_cores(db_path)
     result = []
     for core in range(n_cores):
         t = get_delta(db_path, "thread", "elapsed_time", core)
@@ -186,6 +213,7 @@ def get_times_from_dir(run_dir: str):
     if any(v is not None and v > 0 for v in result):
         return result
     return None
+
 
 
 def active_times_from_dir(run_dir: str):
@@ -228,7 +256,8 @@ def _pick_first_matching_dir(sz_dir: str, pred):
 
 
 def find_fixed_variant_dir_n1(bench: str, size_mb: int):
-    sz_dir = os.path.join(FIXED_DVFS_ROOT, bench, "n1", f"l3_{size_mb}MB")
+    dvfs_sz = DVFS_L3_MB_OVERRIDE if DVFS_L3_MB_OVERRIDE else size_mb
+    sz_dir = os.path.join(FIXED_DVFS_ROOT, bench, "n1", f"l3_{dvfs_sz}MB")
     if not os.path.isdir(sz_dir):
         return None
 
@@ -243,7 +272,8 @@ def find_fixed_variant_dir_n1(bench: str, size_mb: int):
 
 
 def find_smart_ttl_dir(bench: str, n_tag: str, size_mb: int):
-    sz_dir = os.path.join(SMART_TTL_ROOT, bench, n_tag, f"l3_{size_mb}MB")
+    dvfs_sz = DVFS_L3_MB_OVERRIDE if DVFS_L3_MB_OVERRIDE else size_mb
+    sz_dir = os.path.join(SMART_TTL_ROOT, bench, n_tag, f"l3_{dvfs_sz}MB")
     return _pick_first_matching_dir(
         sz_dir,
         lambda d: d.startswith("lc_c") and d.endswith("_mram14")
@@ -620,6 +650,9 @@ def stage6_metrics_from_run(run_dir: str) -> dict:
         return out
 
     n_cores = get_num_cores(db_path)
+    sim_n = _read_sim_n(run_dir)
+    if sim_n and sim_n < n_cores:
+        n_cores = sim_n
     cores = get_per_core_metrics(db_path, n_cores)
     if not cores:
         return out
@@ -893,11 +926,14 @@ def main():
                     help="Base repro dir (default: ~/COSC_498/miniMXE/repro)")
     ap.add_argument("--out", type=str, default=DEFAULT_OUT,
                     help="Output CSV path (default: ~/COSC_498/miniMXE/repro/agg/dvfs.csv)")
+    ap.add_argument("--dvfs-root", type=str, default=None,
+                help="Override DVFS run root for both n1 and multicore (default: 7_fixed_dvfs + 6_smart_dvfs_ttl under --base)")
+    ap.add_argument("--dvfs-l3-mb", type=int, default=None,
+                help="Override L3 size in DVFS dir paths (e.g. 32 for cross-cap runs that use 32MB MRAM but 16MB baseline)")
     args = ap.parse_args()
-
     base = os.path.expanduser(args.base)
     out = os.path.expanduser(args.out)
-    init_paths(base)
+    init_paths(base, args.dvfs_root, args.dvfs_l3_mb)
 
     rows = []
     rows.extend(build_n1_rows())

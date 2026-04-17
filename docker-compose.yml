@@ -1,0 +1,11 @@
+services:
+  mx3:
+    image: mx3-docker
+    container_name: mx3
+    stdin_open: true
+    tty: true
+    working_dir: /work
+    volumes:
+      - ${SPEC_DIR}:/mnt/spec2017
+      - ${TRACE_DIR}:/mnt/traces
+      - ${WORK_DIR:-.}:/work

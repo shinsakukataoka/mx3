@@ -735,7 +735,7 @@ def validate_run(run_dir: Path) -> None:
         raise SystemExit("[ERR] SNIPER_HOME/run-sniper missing; fix mx3/config/site.yaml")
 
     # Engine scripts
-    for s in ("run_spec.sh", "run_traces.sh", "run_microbench.sh", "run_kernel.sh", "flags_common.sh", "run_hca.sh", "hca_flags_common.sh"):
+    for s in ("run_spec.sh", "run_traces.sh", "run_microbench.sh", "run_kernel.sh", "flags_common.sh", "run_hca.sh", "run_hca_traces.sh", "hca_flags_common.sh"):
         if not (MX2_ROOT / "engine" / s).exists():
             raise SystemExit(f"[ERR] missing mx3/engine/{s}")
 
@@ -752,7 +752,7 @@ def validate_run(run_dir: Path) -> None:
             raise SystemExit(f"[ERR] duplicate OUTDIR: {outdir}")
         seen_outdirs.add(outdir)
         # Variant label validation: HCA uses its own label format
-        if camp == "hca":
+        if camp in ("hca", "hca_traces"):
             if not HCA_LABEL_RE.match(var):
                 raise SystemExit(f"[ERR] job {i} invalid HCA VARIANT: {var}")
         elif var not in ("baseline_sram_only", "baseline_mram_only") \
@@ -765,7 +765,7 @@ def validate_run(run_dir: Path) -> None:
             spec_root = env.get("SPEC_ROOT", "")
             if not spec_root or not (Path(spec_root) / "shrc").exists():
                 raise SystemExit("[ERR] SPEC_ROOT/shrc missing; fix mx3/config/site.yaml")
-        elif camp == "traces":
+        elif camp in ("traces", "hca_traces"):
             trace_root = env.get("TRACE_ROOT", "")
             if not trace_root or not Path(trace_root).exists():
                 raise SystemExit("[ERR] TRACE_ROOT missing; fix mx3/config/site.yaml")

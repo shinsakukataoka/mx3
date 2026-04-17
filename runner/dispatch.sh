@@ -24,6 +24,7 @@ set +e
 case "$CAMPAIGN" in
   spec)       bash "$REPO_ROOT/mx3/engine/run_spec.sh";       rc=$? ;;
   hca)        bash "$REPO_ROOT/mx3/engine/run_hca.sh";        rc=$? ;;
+  hca_traces) bash "$REPO_ROOT/mx3/engine/run_hca_traces.sh"; rc=$? ;;
   traces)     bash "$REPO_ROOT/mx3/engine/run_traces.sh";     rc=$? ;;
   microbench)     bash "$REPO_ROOT/mx3/engine/run_microbench.sh";     rc=$? ;;
   kernel)         bash "$REPO_ROOT/mx3/engine/run_kernel.sh";         rc=$? ;;

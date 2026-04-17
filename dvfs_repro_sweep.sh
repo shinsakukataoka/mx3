@@ -96,7 +96,8 @@ except (KeyError, TypeError):
 make_lc_base() {
   local _cap="$1"
   local _cap_lbl="${_cap//./$'p'}"
-  echo "lc_c${_cap_lbl}_s${_stat_lbl}_d${_dyn_lbl}_tf1_h0p10_f4_st${_step_lbl}_pi${BASE_PERIODIC_INS}"
+  local _hyst_lbl="${_HYST_LBL:-0p10}"
+  echo "lc_c${_cap_lbl}_s${_stat_lbl}_d${_dyn_lbl}_tf1_h${_hyst_lbl}_f4_st${_step_lbl}_pi${BASE_PERIODIC_INS}"
 }
 
 get_calibrated_workloads() {
@@ -805,6 +806,149 @@ for CORES in 1 4 8; do
     emit_job "${LC_BASE}" "mram14" "$WORKLOAD" "$CORES" 32
   done
 done
+
+TOTAL_JOBS=$(( TOTAL_JOBS + JOB_COUNT ))
+echo "  -> $JOB_COUNT jobs"
+
+
+# ===============================================================
+# STAGE 15: DVFS Tuning Sweep (250 jobs)
+#   10 n=1 workloads @ L3=16MB, MRAM+DVFS only.
+#   Sweep cross-product of:
+#     interval (pi): 500k, 1M, 2M, 5M, 10M instructions
+#     hysteresis (h): 0, 0.05, 0.10, 0.20, 0.50 W
+#   5 intervals × 5 hysteresis × 10 workloads = 250 jobs
+# ===============================================================
+echo ""
+echo "=============================="
+echo " Stage 15: DVFS Tuning"
+echo "=============================="
+
+setup_stage "15_tuning"
+
+_ORIG_PI="$BASE_PERIODIC_INS"
+
+for PI in 500000 1000000 2000000 5000000 10000000; do
+  BASE_PERIODIC_INS="$PI"
+  for HYST in 0 0p05 0p10 0p20 0p50; do
+    _HYST_LBL="$HYST"
+    mapfile -t WLOADS < <(get_calibrated_workloads 1 16)
+    for WORKLOAD in "${WLOADS[@]}"; do
+      _cap=$(get_plm_cap "$WORKLOAD" 1 16)
+      LC_BASE=$(make_lc_base "$_cap")
+      emit_job "${LC_BASE}" "mram14" "$WORKLOAD" 1 16
+    done
+  done
+done
+
+BASE_PERIODIC_INS="$_ORIG_PI"
+unset _HYST_LBL
+
+TOTAL_JOBS=$(( TOTAL_JOBS + JOB_COUNT ))
+echo "  -> $JOB_COUNT jobs"
+
+
+# ===============================================================
+# STAGE 16: pi=10M re-run at 16MB (120 jobs)
+#
+#   Tuning (Stage 15) showed pi=10M delivers 6.6% mean speedup
+#   vs pi=2M's 1.2%, because the PLM needs a long measurement
+#   window to produce accurate power estimates.
+#
+#   Part 1: Main selective DVFS (n=1/4/8) — 20 jobs
+#     10 n=1 + 5 n=4 + 5 n=8 workloads, basic selective (k=1, util)
+#   Part 2: Sensitivity sweeps (n=1 only) — 90 jobs
+#     Read-latency:  4 mults  × 10 wl = 40
+#     Leakage gap:   3 fracs  × 10 wl = 30
+#     Cap ± MAE:     2 dirs   × 10 wl = 20
+#   Part 3: Global DVFS (n=4/8 only) — 10 jobs
+#     5 n=4 + 5 n=8 workloads
+# ===============================================================
+echo ""
+echo "=============================="
+echo " Stage 16: pi=10M @ 16MB"
+echo "=============================="
+
+setup_stage "16_10M"
+
+_ORIG_PI="$BASE_PERIODIC_INS"
+BASE_PERIODIC_INS=10000000
+
+L3_MB=16
+
+# ----- Part 1: Main selective DVFS (20 jobs) -----
+echo "  Part 1: Main selective DVFS"
+
+for CORES in 1 4 8; do
+  mapfile -t WLOADS < <(get_calibrated_workloads "$CORES" "$L3_MB")
+  for WORKLOAD in "${WLOADS[@]}"; do
+    _cap=$(get_plm_cap "$WORKLOAD" "$CORES" "$L3_MB")
+    LC_BASE=$(make_lc_base "$_cap")
+    emit_job "${LC_BASE}" "mram14" "$WORKLOAD" "$CORES" "$L3_MB"
+  done
+done
+
+# ----- Part 2a: Read-Latency Sweep (40 jobs) -----
+echo "  Part 2a: Read-Latency Sweep"
+
+CORES=1
+mapfile -t WLOADS < <(get_calibrated_workloads "$CORES" "$L3_MB")
+for MULT in 2 3 4 5; do
+  _MRAM_RD_MULT="$MULT"
+  for WORKLOAD in "${WLOADS[@]}"; do
+    _cap=$(get_plm_cap "$WORKLOAD" "$CORES" "$L3_MB")
+    LC_BASE=$(make_lc_base "$_cap")
+    emit_job "${LC_BASE}" "mram14" "$WORKLOAD" "$CORES" "$L3_MB"
+  done
+  unset _MRAM_RD_MULT
+done
+
+# ----- Part 2b: Leakage Gap Sweep (30 jobs) -----
+echo "  Part 2b: Leakage Gap Sweep"
+
+for FRAC in 0.25 0.50 0.75; do
+  _MRAM_LEAK_GAP_FRAC="$FRAC"
+  for WORKLOAD in "${WLOADS[@]}"; do
+    _cap=$(get_plm_cap "$WORKLOAD" "$CORES" "$L3_MB")
+    LC_BASE=$(make_lc_base "$_cap")
+    emit_job "${LC_BASE}" "mram14" "$WORKLOAD" "$CORES" "$L3_MB"
+  done
+  unset _MRAM_LEAK_GAP_FRAC
+done
+
+# ----- Part 2c: Cap ± MAE Sweep (20 jobs) -----
+echo "  Part 2c: Cap MAE Sweep"
+
+MAE=0.636
+for WORKLOAD in "${WLOADS[@]}"; do
+  _cap=$(get_plm_cap "$WORKLOAD" "$CORES" "$L3_MB")
+
+  _cap_minus=$(python3 -c "print(f'{max(${_cap} - ${MAE}, 1.0):.2f}')")
+  LC_MINUS=$(make_lc_base "$_cap_minus")
+  emit_job "${LC_MINUS}" "mram14" "$WORKLOAD" "$CORES" "$L3_MB"
+
+  _cap_plus=$(python3 -c "print(f'{${_cap} + ${MAE}:.2f}')")
+  LC_PLUS=$(make_lc_base "$_cap_plus")
+  emit_job "${LC_PLUS}" "mram14" "$WORKLOAD" "$CORES" "$L3_MB"
+done
+
+# ----- Part 3: Global DVFS (10 jobs) -----
+echo "  Part 3: Global DVFS"
+
+USE_SELECTIVE_DVFS=0
+_FREQ_TAG="global"
+for CORES in 4 8; do
+  mapfile -t WLOADS < <(get_calibrated_workloads "$CORES" "$L3_MB")
+  for WORKLOAD in "${WLOADS[@]}"; do
+    _cap=$(get_plm_cap "$WORKLOAD" "$CORES" "$L3_MB")
+    LC_BASE=$(make_lc_base "$_cap")
+    emit_job "${LC_BASE}" "mram14" "$WORKLOAD" "$CORES" "$L3_MB"
+  done
+done
+unset USE_SELECTIVE_DVFS _FREQ_TAG
+
+# Restore original pi
+BASE_PERIODIC_INS="$_ORIG_PI"
 
 TOTAL_JOBS=$(( TOTAL_JOBS + JOB_COUNT ))
 echo "  -> $JOB_COUNT jobs"
